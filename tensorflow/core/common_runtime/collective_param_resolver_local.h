@@ -43,6 +43,7 @@ class CollectiveParamResolverLocal : public ParamResolverInterface {
   CollectiveParamResolverLocal(const ConfigProto& config,
                                const DeviceMgr* dev_mgr,
                                DeviceResolverInterface* dev_resolver,
+                               NcclCommunicatorInterface* nccl_communicator,
                                const string& task_name);
 
   ~CollectiveParamResolverLocal() override {}
@@ -72,7 +73,8 @@ class CollectiveParamResolverLocal : public ParamResolverInterface {
     mutable mutex mu;
     CollGroupParams group TF_GUARDED_BY(mu);
     Status status TF_GUARDED_BY(mu);
-    std::unordered_map<string, DeviceAttributes> devices TF_GUARDED_BY(mu);
+    std::unordered_map<string, int64> incarnations_by_device_name
+        TF_GUARDED_BY(mu);
     std::vector<StatusCallback> waiting TF_GUARDED_BY(mu);
   };
 
@@ -141,8 +143,7 @@ class CollectiveParamResolverLocal : public ParamResolverInterface {
 
   // Establishes the final order of gp->device_names and gp->task_names by
   // considering localities of all devices.
-  void CompleteDefaultRanking(const std::vector<DeviceAttributes>& attributes,
-                              CollGroupParams* gp);
+  void CompleteDefaultRanking(CollGroupParams* gp);
 
   // Finish populating *cp.
   // Precondition: *gr has been fully populated by CompleteGroupLocal.
@@ -188,6 +189,7 @@ class CollectiveParamResolverLocal : public ParamResolverInterface {
   const bool nccl_;
   const DeviceMgr* dev_mgr_;
   DeviceResolverInterface* dev_resolver_;  // Not owned.
+  NcclCommunicatorInterface* nccl_communicator_;  // Not owned.
   string task_name_;
   string gpu_ring_order_;
   mutex group_mu_;

@@ -350,7 +350,7 @@ using AutoTuneFusedConv =
                       se::dnn::AlgorithmConfig>;
 
 inline int64 ConvolveScratchSize() {
-  static int64 convolve_scratch_size = GetDnnWorkspaceLimit(
+  static int64_t convolve_scratch_size = GetDnnWorkspaceLimit(
       // default value is in bytes despite the name of the environment variable
       "TF_CUDNN_WORKSPACE_LIMIT_IN_MB", 1LL << 32  // 4GB
   );
@@ -368,7 +368,8 @@ Status FindBestConvolveAlgorithm(
     const se::dnn::FilterDescriptor& filter_desc,
     const se::dnn::BatchDescriptor& bias_desc,
     const se::dnn::BatchDescriptor& output_desc,
-    const se::dnn::ConvolutionDescriptor& conv_desc, double conv_input_scale,
+    const se::dnn::ConvolutionDescriptor& conv_desc,
+    const se::dnn::ActivationMode activation_mode, double conv_input_scale,
     double side_input_scale, const ConvLaunch launch, OpKernelContext* context,
     se::Stream* stream, se::DeviceMemory<T> output_ptr, const LogFunc& log,
     se::dnn::AlgorithmConfig* algorithm_config) {
@@ -388,7 +389,7 @@ Status FindBestConvolveAlgorithm(
                  se::dnn::ConvolutionKind::FORWARD,
                  se::dnn::ToDataType<T>::value, conv_input_scale,
                  side_input_scale, stream, input_desc, filter_desc, bias_desc,
-                 output_desc, conv_desc, &plans)
+                 output_desc, conv_desc, activation_mode, &plans)
              .ok()) {
       return errors::Unknown(
           "Failed to get convolution plans. This is probably because cuDNN "
@@ -401,9 +402,7 @@ Status FindBestConvolveAlgorithm(
           plan->getWorkspaceSize()));
     }
   } else {
-    if (!stream->parent()->GetConvolveAlgorithms(
-            params.ShouldIncludeWinogradNonfusedAlgo<T>(stream->parent()),
-            &algorithms)) {
+    if (!stream->parent()->GetConvolveAlgorithms(&algorithms)) {
       return errors::Unknown(
           "Failed to get convolution algorithm. This is probably because cuDNN "
           "failed to initialize, so try looking to see if a warning log "
@@ -509,19 +508,19 @@ struct LaunchFusedConv2DOp<GPUDevice, T> {
 
     Tensor input = input_param;
 
-    const int64 in_batch = GetTensorDim(input, params.data_format, 'N');
-    int64 in_rows = GetTensorDim(input, params.data_format, 'H');
-    int64 in_cols = GetTensorDim(input, params.data_format, 'W');
-    const int64 in_depths = GetTensorDim(input, params.data_format, 'C');
+    const int64_t in_batch = GetTensorDim(input, params.data_format, 'N');
+    int64_t in_rows = GetTensorDim(input, params.data_format, 'H');
+    int64_t in_cols = GetTensorDim(input, params.data_format, 'W');
+    const int64_t in_depths = GetTensorDim(input, params.data_format, 'C');
 
-    const int64 patch_rows = filter.dim_size(0);
-    const int64 patch_cols = filter.dim_size(1);
-    const int64 patch_depths = filter.dim_size(2);
+    const int64_t patch_rows = filter.dim_size(0);
+    const int64_t patch_cols = filter.dim_size(1);
+    const int64_t patch_depths = filter.dim_size(2);
 
-    const int64 out_batch = GetTensorDim(*output, params.data_format, 'N');
-    const int64 out_rows = GetTensorDim(*output, params.data_format, 'H');
-    const int64 out_cols = GetTensorDim(*output, params.data_format, 'W');
-    const int64 out_depths = GetTensorDim(*output, params.data_format, 'C');
+    const int64_t out_batch = GetTensorDim(*output, params.data_format, 'N');
+    const int64_t out_rows = GetTensorDim(*output, params.data_format, 'H');
+    const int64_t out_cols = GetTensorDim(*output, params.data_format, 'W');
+    const int64_t out_depths = GetTensorDim(*output, params.data_format, 'C');
 
     // Bias of the following dimensions: [ output_depth ]
     const Tensor& bias = context->input(2);
@@ -532,9 +531,9 @@ struct LaunchFusedConv2DOp<GPUDevice, T> {
                 errors::InvalidArgument("bias depth must be equal to out depth",
                                         bias.shape().DebugString()));
 
-    const int64 common_padding_rows =
+    const int64_t common_padding_rows =
         std::min(dimensions.pad_rows_before, dimensions.pad_rows_after);
-    const int64 common_padding_cols =
+    const int64_t common_padding_cols =
         std::min(dimensions.pad_cols_before, dimensions.pad_cols_after);
     if (dimensions.pad_rows_before != dimensions.pad_rows_after ||
         dimensions.pad_cols_before != dimensions.pad_cols_after) {
@@ -548,25 +547,25 @@ struct LaunchFusedConv2DOp<GPUDevice, T> {
       // result is equivalent to as if the padding is (1, 1, 1, 1). Changing the
       // padding in such a way would allow us to avoid the allocation.
       Tensor transformed_input;
-      const int64 padding_rows_diff =
+      const int64_t padding_rows_diff =
           std::abs(dimensions.pad_rows_after - dimensions.pad_rows_before);
-      const int64 padding_cols_diff =
+      const int64_t padding_cols_diff =
           std::abs(dimensions.pad_cols_after - dimensions.pad_cols_before);
-      const int64 new_in_rows = in_rows + padding_rows_diff;
-      const int64 new_in_cols = in_cols + padding_cols_diff;
+      const int64_t new_in_rows = in_rows + padding_rows_diff;
+      const int64_t new_in_cols = in_cols + padding_cols_diff;
       OP_REQUIRES_OK(context,
                      context->allocate_temp(
                          DataTypeToEnum<T>::value,
                          ShapeFromFormat(params.data_format, in_batch,
                                          new_in_rows, new_in_cols, in_depths),
                          &transformed_input));
-      const int64 input_pad_top =
+      const int64_t input_pad_top =
           dimensions.pad_rows_before - common_padding_rows;
-      const int64 input_pad_bottom =
+      const int64_t input_pad_bottom =
           dimensions.pad_rows_after - common_padding_rows;
-      const int64 input_pad_left =
+      const int64_t input_pad_left =
           dimensions.pad_cols_before - common_padding_cols;
-      const int64 input_pad_right =
+      const int64_t input_pad_right =
           dimensions.pad_cols_after - common_padding_cols;
       bool in_bounds =
           FastBoundsCheck(input_pad_top, std::numeric_limits<int>::max()) &&
@@ -753,8 +752,8 @@ struct LaunchFusedConv2DOp<GPUDevice, T> {
     if (cudnn_use_autotune) {
       auto status = FindBestConvolveAlgorithm<T>(
           conv_parameters, input_desc, filter_desc, bias_desc, output_desc,
-          conv_desc, kConvInputScale, kSideInputScale, launch, context, stream,
-          output_ptr,
+          conv_desc, dnn_activation_mode, kConvInputScale, kSideInputScale,
+          launch, context, stream, output_ptr,
           [&](absl::Span<const tensorflow::AutotuneResult> results) {
             LogFusedConvForwardAutotuneResults(
                 se::dnn::ToDataType<T>::value, input_ptr, filter_ptr,

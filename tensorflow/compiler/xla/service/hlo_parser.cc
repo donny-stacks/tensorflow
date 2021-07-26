@@ -15,12 +15,15 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/service/hlo_parser.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/memory/memory.h"
@@ -161,8 +164,9 @@ bool CanInferShape(HloOpcode code) {
     // Technically the following ops do not require an explicit result shape,
     // but we made it so that we always write the shapes explicitly.
     case HloOpcode::kAllGather:
+    case HloOpcode::kAllGatherStart:
+    case HloOpcode::kAllGatherDone:
     case HloOpcode::kAllReduce:
-    case HloOpcode::kAllReduceScatter:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kAllToAll:
@@ -176,6 +180,7 @@ bool CanInferShape(HloOpcode code) {
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kRecv:
     case HloOpcode::kRecvDone:
+    case HloOpcode::kReduceScatter:
     case HloOpcode::kSend:
     case HloOpcode::kSendDone:
     case HloOpcode::kSlice:
@@ -266,15 +271,17 @@ class HloParserImpl : public HloParser {
   // given value. If the literal is dense, it must have the default layout.
   //
   // `loc` should be the source location of the value.
-  bool SetValueInLiteral(LocTy loc, int64 value, int64 index, Literal* literal);
-  bool SetValueInLiteral(LocTy loc, double value, int64 index,
+  bool SetValueInLiteral(LocTy loc, int64_t value, int64_t index,
                          Literal* literal);
-  bool SetValueInLiteral(LocTy loc, bool value, int64 index, Literal* literal);
-  bool SetValueInLiteral(LocTy loc, std::complex<double> value, int64 index,
+  bool SetValueInLiteral(LocTy loc, double value, int64_t index,
+                         Literal* literal);
+  bool SetValueInLiteral(LocTy loc, bool value, int64_t index,
+                         Literal* literal);
+  bool SetValueInLiteral(LocTy loc, std::complex<double> value, int64_t index,
                          Literal* literal);
   // `loc` should be the source location of the value.
   template <typename LiteralNativeT, typename ParsedElemT>
-  bool SetValueInLiteralHelper(LocTy loc, ParsedElemT value, int64 index,
+  bool SetValueInLiteralHelper(LocTy loc, ParsedElemT value, int64_t index,
                                Literal* literal);
 
   // Checks whether the given value is within the range of LiteralNativeT.
@@ -554,7 +561,7 @@ class HloParserImpl : public HloParser {
 
 bool SplitToInt64s(absl::string_view s, char delim, std::vector<int64>* out) {
   for (const auto& split : absl::StrSplit(s, delim)) {
-    int64 val;
+    int64_t val;
     if (!absl::SimpleAtoi(split, &val)) {
       return false;
     }
@@ -658,7 +665,7 @@ bool HloParserImpl::ParseShapeIndex(ShapeIndex* out) {
 
   std::vector<int64> idxs;
   while (lexer_.GetKind() != TokKind::kRbrace) {
-    int64 idx;
+    int64_t idx;
     if (!ParseInt64(&idx)) {
       return false;
     }
@@ -695,7 +702,7 @@ bool HloParserImpl::ParseAliasing(AliasingData* data) {
     if (!ParseToken(TokKind::kLparen, errmsg)) {
       return false;
     }
-    int64 param_num;
+    int64_t param_num;
     ParseInt64(&param_num);
     if (!ParseToken(TokKind::kComma, errmsg)) {
       return false;
@@ -760,7 +767,7 @@ bool HloParserImpl::ParseInstructionOutputOperandAliasing(
     if (!ParseToken(TokKind::kLparen, errmsg)) {
       return false;
     }
-    int64 operand_index;
+    int64_t operand_index;
     ParseInt64(&operand_index);
     if (!ParseToken(TokKind::kComma, errmsg)) {
       return false;
@@ -1057,7 +1064,7 @@ bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
   HloInstruction* instruction;
   switch (opcode) {
     case HloOpcode::kParameter: {
-      int64 parameter_number;
+      int64_t parameter_number;
       if (!ParseToken(TokKind::kLparen,
                       "expects '(' before parameter number") ||
           !ParseInt64(&parameter_number)) {
@@ -1102,6 +1109,7 @@ bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
     }
     // Unary ops.
     case HloOpcode::kAbs:
+    case HloOpcode::kAllGatherDone:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kRoundNearestAfz:
     case HloOpcode::kBitcast:
@@ -1216,7 +1224,8 @@ bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
           HloInstruction::CreateBitcastConvert(shape, operands[0]));
       break;
     }
-    case HloOpcode::kAllGather: {
+    case HloOpcode::kAllGather:
+    case HloOpcode::kAllGatherStart: {
       optional<std::vector<std::vector<int64>>> tmp_groups;
       optional<std::vector<int64>> replica_group_ids;
       optional<int64> channel_id;
@@ -1239,15 +1248,23 @@ bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
       if (tmp_groups) {
         replica_groups = CreateReplicaGroups(*tmp_groups);
       }
-      instruction = builder->AddInstruction(HloInstruction::CreateAllGather(
-          shape, operands, dimensions->at(0), replica_groups,
-          constrain_layout ? *constrain_layout : false, channel_id,
-          use_global_device_ids ? *use_global_device_ids : false));
+      if (opcode == HloOpcode::kAllGather) {
+        instruction = builder->AddInstruction(HloInstruction::CreateAllGather(
+            shape, operands, dimensions->at(0), replica_groups,
+            constrain_layout ? *constrain_layout : false, channel_id,
+            use_global_device_ids ? *use_global_device_ids : false));
+      } else {
+        instruction =
+            builder->AddInstruction(HloInstruction::CreateAllGatherStart(
+                shape, operands, dimensions->at(0), replica_groups,
+                constrain_layout ? *constrain_layout : false, channel_id,
+                use_global_device_ids ? *use_global_device_ids : false));
+      }
       break;
     }
     case HloOpcode::kAllReduce:
-    case HloOpcode::kAllReduceScatter:
-    case HloOpcode::kAllReduceStart: {
+    case HloOpcode::kAllReduceStart:
+    case HloOpcode::kReduceScatter: {
       optional<std::vector<std::vector<int64>>> tmp_groups;
       optional<HloComputation*> to_apply;
       optional<std::vector<int64>> replica_group_ids;
@@ -1264,7 +1281,7 @@ bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
                                    &constrain_layout};
       attrs["use_global_device_ids"] = {/*required=*/false, AttrTy::kBool,
                                         &use_global_device_ids};
-      if (opcode == HloOpcode::kAllReduceScatter) {
+      if (opcode == HloOpcode::kReduceScatter) {
         attrs["dimensions"] = {/*required=*/true, AttrTy::kBracedInt64List,
                                &dimensions};
       }
@@ -1280,9 +1297,9 @@ bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
             shape, operands, *to_apply, replica_groups,
             constrain_layout ? *constrain_layout : false, channel_id,
             use_global_device_ids ? *use_global_device_ids : false));
-      } else if (opcode == HloOpcode::kAllReduceScatter) {
+      } else if (opcode == HloOpcode::kReduceScatter) {
         instruction =
-            builder->AddInstruction(HloInstruction::CreateAllReduceScatter(
+            builder->AddInstruction(HloInstruction::CreateReduceScatter(
                 shape, operands, *to_apply, replica_groups,
                 constrain_layout ? *constrain_layout : false, channel_id,
                 use_global_device_ids ? *use_global_device_ids : false,
@@ -1501,8 +1518,22 @@ bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
       if (!ParseOperands(&operands) || !ParseAttributes(attrs)) {
         return false;
       }
-      instruction =
-          builder->AddInstruction(HloInstruction::CreateTuple(operands));
+      if (!maybe_infer_shape(
+              [&] {
+                absl::InlinedVector<const Shape*, 2> arg_shapes;
+                arg_shapes.reserve(operands.size());
+                for (auto* operand : operands) {
+                  arg_shapes.push_back(&operand->shape());
+                }
+                return ShapeInference::InferVariadicOpShape(opcode, arg_shapes);
+              },
+              &shape)) {
+        return false;
+      }
+      // HloInstruction::CreateTuple() infers the shape of the tuple from
+      // operands and should not be used here.
+      instruction = builder->AddInstruction(
+          HloInstruction::CreateVariadic(shape, HloOpcode::kTuple, operands));
       break;
     }
     case HloOpcode::kWhile: {
@@ -2375,7 +2406,7 @@ bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
                               " operand layout constraints, ",
                               operand_layout_constraints->size(), " given"));
         }
-        for (int64 i = 0; i < operands.size(); ++i) {
+        for (int64_t i = 0; i < operands.size(); ++i) {
           const Shape& operand_shape_with_layout =
               (*operand_layout_constraints)[i];
           if (!LayoutUtil::HasLayout(operand_shape_with_layout)) {
@@ -2847,7 +2878,7 @@ bool HloParserImpl::ParseSingleSharding(OpSharding* sharding,
           }
 
           do {
-            int64 dim;
+            int64_t dim;
             if (!ParseInt64(&dim)) {
               return false;
             }
@@ -2859,7 +2890,7 @@ bool HloParserImpl::ParseSingleSharding(OpSharding* sharding,
             return false;
           }
           do {
-            int64 device;
+            int64_t device;
             if (!ParseInt64(&device)) {
               return false;
             }
@@ -2919,10 +2950,10 @@ bool HloParserImpl::ParseSingleSharding(OpSharding* sharding,
           "dimensions");
     }
     sharding->set_type(OpSharding::OTHER);
-    for (int64 dim : tile_assignment_dimensions) {
+    for (int64_t dim : tile_assignment_dimensions) {
       sharding->add_tile_assignment_dimensions(dim);
     }
-    for (int64 device : devices) {
+    for (int64_t device : devices) {
       sharding->add_tile_assignment_devices(device);
     }
     sharding->set_replicate_on_last_tile_dim(last_tile_dim_replicate);
@@ -3029,7 +3060,7 @@ bool HloParserImpl::ParseInstructionNames(
                     "expects '}' at the end of instruction name list");
 }
 
-bool HloParserImpl::SetValueInLiteral(LocTy loc, int64 value, int64 index,
+bool HloParserImpl::SetValueInLiteral(LocTy loc, int64_t value, int64_t index,
                                       Literal* literal) {
   const Shape& shape = literal->shape();
   switch (shape.element_type()) {
@@ -3063,7 +3094,7 @@ bool HloParserImpl::SetValueInLiteral(LocTy loc, int64 value, int64 index,
   }
 }
 
-bool HloParserImpl::SetValueInLiteral(LocTy loc, double value, int64 index,
+bool HloParserImpl::SetValueInLiteral(LocTy loc, double value, int64_t index,
                                       Literal* literal) {
   const Shape& shape = literal->shape();
   switch (shape.element_type()) {
@@ -3082,7 +3113,7 @@ bool HloParserImpl::SetValueInLiteral(LocTy loc, double value, int64 index,
   }
 }
 
-bool HloParserImpl::SetValueInLiteral(LocTy loc, bool value, int64 index,
+bool HloParserImpl::SetValueInLiteral(LocTy loc, bool value, int64_t index,
                                       Literal* literal) {
   const Shape& shape = literal->shape();
   switch (shape.element_type()) {
@@ -3095,7 +3126,7 @@ bool HloParserImpl::SetValueInLiteral(LocTy loc, bool value, int64 index,
 }
 
 bool HloParserImpl::SetValueInLiteral(LocTy loc, std::complex<double> value,
-                                      int64 index, Literal* literal) {
+                                      int64_t index, Literal* literal) {
   const Shape& shape = literal->shape();
   switch (shape.element_type()) {
     case C64:
@@ -3119,9 +3150,75 @@ std::string StringifyValue(std::complex<double> val) {
   return StrFormat("(%f, %f)", std::real(val), std::imag(val));
 }
 
+// Evaluates to V when T == U.
+template <typename T, typename U, typename V>
+using EnableIfSameWithType = std::enable_if_t<std::is_same<T, U>::value, V>;
+
+template <class T, EnableIfSameWithType<T, bool, bool> = false>
+uint64_t GetNanPayload(T val) {
+  return 0;
+}
+
+template <class T, EnableIfSameWithType<T, int64_t, bool> = false>
+uint64_t GetNanPayload(T val) {
+  return 0;
+}
+
+template <class T, EnableIfSameWithType<T, double, bool> = false>
+uint64_t GetNanPayload(T val) {
+  auto rep = absl::bit_cast<uint64_t>(val);
+  if (auto payload = rep & NanPayloadBitMask<double>()) {
+    return payload;
+  }
+  return QuietNanWithoutPayload<double>();
+}
+
+template <typename LiteralNativeT, typename LiteralComponentT>
+EnableIfSameWithType<LiteralNativeT, LiteralComponentT, LiteralNativeT>
+LiteralNativeFromRealImag(LiteralComponentT real, LiteralComponentT imag) {
+  return real;
+}
+
+template <typename LiteralNativeT, typename LiteralComponentT>
+EnableIfSameWithType<LiteralNativeT, std::complex<LiteralComponentT>,
+                     LiteralNativeT>
+LiteralNativeFromRealImag(LiteralComponentT real, LiteralComponentT imag) {
+  return LiteralNativeT(real, imag);
+}
+
+template <typename T>
+struct ComponentType {
+  using Type = T;
+};
+
+template <typename T>
+struct ComponentType<std::complex<T>> {
+  using Type = T;
+};
+
+template <typename T>
+T GetReal(T value) {
+  return value;
+}
+
+template <typename T>
+T GetReal(std::complex<T> value) {
+  return value.real();
+}
+
+template <typename T>
+T GetImag(T value) {
+  return 0;
+}
+
+template <typename T>
+T GetImag(std::complex<T> value) {
+  return value.imag();
+}
+
 template <typename LiteralNativeT, typename ParsedElemT>
 bool HloParserImpl::SetValueInLiteralHelper(LocTy loc, ParsedElemT value,
-                                            int64 index, Literal* literal) {
+                                            int64_t index, Literal* literal) {
   if (!CheckParsedValueIsInRange<LiteralNativeT>(loc, value)) {
     return false;
   }
@@ -3134,8 +3231,54 @@ bool HloParserImpl::SetValueInLiteralHelper(LocTy loc, ParsedElemT value,
                              " at linear index ", index,
                              ", but the index is out of range"));
   }
+  using ParsedElemComponentT = typename ComponentType<ParsedElemT>::Type;
+  using LiteralNativeComponentT = typename ComponentType<LiteralNativeT>::Type;
+  const auto handle_nan = [this, literal, index, loc](
+                              ParsedElemComponentT parsed_value_component,
+                              LiteralNativeComponentT*
+                                  literal_value_component) {
+    if (!std::isnan(static_cast<double>(parsed_value_component))) {
+      return true;
+    }
+    auto nan_payload = GetNanPayload(parsed_value_component);
+    if (nan_payload == QuietNanWithoutPayload<double>()) {
+      nan_payload = QuietNanWithoutPayload<LiteralNativeComponentT>();
+    }
+    const auto kLargestPayload = NanPayloadBitMask<LiteralNativeComponentT>();
+    if (nan_payload > kLargestPayload) {
+      return Error(
+          loc,
+          StrCat("tries to set NaN payload 0x", absl::Hex(nan_payload),
+                 " to a literal in shape ",
+                 ShapeUtil::HumanString(literal->shape()), " at linear index ",
+                 index, ", but the NaN payload is out of range (0x",
+                 absl::Hex(kLargestPayload), ")"));
+    }
+    *literal_value_component = NanWithSignAndPayload<LiteralNativeComponentT>(
+        /*sign=*/std::signbit(static_cast<double>(parsed_value_component)),
+        /*nan_payload=*/nan_payload);
+    return true;
+  };
+  const ParsedElemComponentT parsed_real_value = GetReal(value);
+  auto literal_real_value =
+      static_cast<LiteralNativeComponentT>(parsed_real_value);
+  if (std::is_floating_point<ParsedElemT>::value ||
+      std::is_same<ParsedElemT, std::complex<double>>::value) {
+    if (!handle_nan(parsed_real_value, &literal_real_value)) {
+      return false;
+    }
+  }
+  const ParsedElemComponentT parsed_imag_value = GetImag(value);
+  auto literal_imag_value =
+      static_cast<LiteralNativeComponentT>(parsed_imag_value);
+  if (std::is_same<ParsedElemT, std::complex<double>>::value) {
+    if (!handle_nan(parsed_real_value, &literal_imag_value)) {
+      return false;
+    }
+  }
   literal->data<LiteralNativeT>().at(index) =
-      static_cast<LiteralNativeT>(value);
+      LiteralNativeFromRealImag<LiteralNativeT>(literal_real_value,
+                                                literal_imag_value);
   return true;
 }
 
@@ -3225,8 +3368,8 @@ bool HloParserImpl::ParseDenseLiteral(Literal* literal, const Shape& shape) {
   // Create a literal with the given shape in default layout.
   *literal = LiteralUtil::CreateFromDimensions(
       shape.element_type(), AsInt64Slice(shape.dimensions()));
-  int64 nest_level = 0;
-  int64 linear_index = 0;
+  int64_t nest_level = 0;
+  int64_t linear_index = 0;
   // elems_seen_per_dim[i] is how many elements or sub-arrays we have seen for
   // the dimension i. For example, to parse f32[2,3] {{1, 2, 3}, {4, 5, 6}},
   // when we are parsing the 2nd '{' (right before '1'), we are seeing a
@@ -3240,7 +3383,7 @@ bool HloParserImpl::ParseDenseLiteral(Literal* literal, const Shape& shape) {
                                             elems_seen_per_dim.begin() + dim);
     return StrCat("[",
                   StrJoin(elems_seen_until_dim, ",",
-                          [](std::string* out, const int64 num_elems) {
+                          [](std::string* out, const int64_t num_elems) {
                             StrAppend(out, num_elems - 1);
                           }),
                   "]");
@@ -3327,12 +3470,12 @@ bool HloParserImpl::ParseDenseLiteral(Literal* literal, const Shape& shape) {
         // gives us same optimized HLO graph.
         static uint32 data = 0;
         uint32* raw_data = static_cast<uint32*>(literal->untyped_data());
-        for (int64 i = 0; i < literal->size_bytes() / 4; ++i) {
+        for (int64_t i = 0; i < literal->size_bytes() / 4; ++i) {
           raw_data[i] = data++;
         }
         uint8* raw_data_int8 = static_cast<uint8*>(literal->untyped_data());
         static uint8 data_int8 = 0;
-        for (int64 i = 0; i < literal->size_bytes() % 4; ++i) {
+        for (int64_t i = 0; i < literal->size_bytes() % 4; ++i) {
           raw_data_int8[literal->size_bytes() / 4 + i] = data_int8++;
         }
         break;
@@ -3345,8 +3488,6 @@ bool HloParserImpl::ParseDenseLiteral(Literal* literal, const Shape& shape) {
       case TokKind::kw_false:
       case TokKind::kInt:
       case TokKind::kDecimal:
-      case TokKind::kw_nan:
-      case TokKind::kNegNan:
       case TokKind::kw_inf:
       case TokKind::kNegInf: {
         add_one_elem_seen();
@@ -3361,7 +3502,7 @@ bool HloParserImpl::ParseDenseLiteral(Literal* literal, const Shape& shape) {
         } else if (primitive_util::IsIntegralType(shape.element_type()) ||
                    shape.element_type() == PRED) {
           LocTy loc = lexer_.GetLoc();
-          int64 value;
+          int64_t value;
           if (!ParseInt64(&value)) {
             return Error(loc, StrCat("expects integer for primitive type: ",
                                      PrimitiveType_Name(shape.element_type())));
@@ -3677,7 +3818,7 @@ bool HloParserImpl::ParseAttributeHelper(
         return true;
       }
       case AttrTy::kInt64: {
-        int64 result;
+        int64_t result;
         if (!ParseInt64(&result)) {
           return false;
         }
@@ -3685,7 +3826,7 @@ bool HloParserImpl::ParseAttributeHelper(
         return true;
       }
       case AttrTy::kInt32: {
-        int64 result;
+        int64_t result;
         if (!ParseInt64(&result)) {
           return false;
         }
@@ -4456,7 +4597,7 @@ bool HloParserImpl::ParseInt64List(const TokKind start, const TokKind end,
                                    const TokKind delim,
                                    std::vector<int64>* result) {
   auto parse_and_add_item = [&]() {
-    int64 i;
+    int64_t i;
     if (!ParseInt64(&i)) {
       return false;
     }
@@ -4554,7 +4695,7 @@ bool HloParserImpl::ParseParamList() {
 bool HloParserImpl::ParseDimensionSizes(std::vector<int64>* dimension_sizes,
                                         std::vector<bool>* dynamic_dimensions) {
   auto parse_and_add_item = [&]() {
-    int64 i;
+    int64_t i;
     bool is_dynamic = false;
     if (lexer_.GetKind() == TokKind::kLeq) {
       is_dynamic = true;
@@ -4579,7 +4720,7 @@ bool HloParserImpl::ParseDimensionSizes(std::vector<int64>* dimension_sizes,
 //   ::= (int64 | '*') (',' (int64 | '*'))*
 bool HloParserImpl::ParseTiles(std::vector<Tile>* tiles) {
   auto parse_and_add_tile_dimension = [&]() {
-    tensorflow::int64 i;
+    int64_t i;
     if (ParseInt64(&i)) {
       tiles->back().add_dimensions(i);
       return true;
@@ -4637,11 +4778,11 @@ bool HloParserImpl::ParseLayoutIntAttribute(
 bool HloParserImpl::ParseLayout(Layout* layout) {
   std::vector<int64> minor_to_major;
   std::vector<Tile> tiles;
-  tensorflow::int64 element_size_in_bits = 0;
-  tensorflow::int64 memory_space = 0;
+  int64_t element_size_in_bits = 0;
+  int64_t memory_space = 0;
 
   auto parse_and_add_item = [&]() {
-    int64 i;
+    int64_t i;
     if (!ParseInt64(&i)) {
       return false;
     }
@@ -4826,7 +4967,7 @@ bool HloParserImpl::ParseDxD(const std::string& name,
   }
   // 1D
   if (lexer_.GetKind() == TokKind::kInt) {
-    int64 number;
+    int64_t number;
     if (!ParseInt64(&number)) {
       return Error(loc, StrFormat("expects sub-attribute '%s=i'", name));
     }
@@ -5125,12 +5266,6 @@ bool HloParserImpl::ParseDouble(double* result) {
     case TokKind::kInt:
       *result = static_cast<double>(lexer_.GetInt64Val());
       break;
-    case TokKind::kw_nan:
-      *result = std::numeric_limits<double>::quiet_NaN();
-      break;
-    case TokKind::kNegNan:
-      *result = -std::numeric_limits<double>::quiet_NaN();
-      break;
     case TokKind::kw_inf:
       *result = std::numeric_limits<double>::infinity();
       break;
@@ -5342,7 +5477,7 @@ bool HloParserImpl::ParseSingleInstruction(HloModule* module) {
 
   // The missing instruction hook we register creates the shaped instruction on
   // the fly as a parameter and returns it.
-  int64 parameter_count = 0;
+  int64_t parameter_count = 0;
   create_missing_instruction_ =
       [this, &builder, &parameter_count](
           const std::string& name,

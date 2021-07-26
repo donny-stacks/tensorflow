@@ -38,7 +38,7 @@ class LoadInjector {
   // Run 'injector' 'num_injection' times, with average inter-injection spacing
   // as 'average_injection_interval_micros' (in microseconds).
   virtual void InjectLoad(std::function<void()> injector, int num_injections,
-                          int64 average_injection_interval_micros) const = 0;
+                          int64_t average_injection_interval_micros) const = 0;
 };
 
 // A load injector that uses uniform inter-injection spacing, i.e. each pair of
@@ -50,7 +50,7 @@ class UniformLoadInjector : public LoadInjector {
   ~UniformLoadInjector() override = default;
 
   void InjectLoad(std::function<void()> injector, int num_injections,
-                  int64 average_injection_interval_micros) const override;
+                  int64_t average_injection_interval_micros) const override;
 
  private:
   TF_DISALLOW_COPY_AND_ASSIGN(UniformLoadInjector);
@@ -58,21 +58,21 @@ class UniformLoadInjector : public LoadInjector {
 
 void UniformLoadInjector::InjectLoad(
     std::function<void()> injector, const int num_injections,
-    const int64 average_injection_interval_micros) const {
+    const int64_t average_injection_interval_micros) const {
   int num_injections_performed = 0;
-  const int64 start_time_micros = Env::Default()->NowMicros();
+  const int64_t start_time_micros = Env::Default()->NowMicros();
   while (num_injections_performed < num_injections) {
     // Inject.
     injector();
     ++num_injections_performed;
 
     // Wait until it's time for the next injection.
-    const int64 next_injection_time_micros =
+    const int64_t next_injection_time_micros =
         start_time_micros +
         (num_injections_performed * average_injection_interval_micros);
-    int64 now_micros = Env::Default()->NowMicros();
+    int64_t now_micros = Env::Default()->NowMicros();
     while (now_micros < next_injection_time_micros) {
-      const int64 kSleepThresholdMicros = 1000;
+      const int64_t kSleepThresholdMicros = 1000;
       if (next_injection_time_micros - now_micros >= kSleepThresholdMicros) {
         Env::Default()->SleepForMicroseconds(1 /* minimum time */);
       }
@@ -183,7 +183,7 @@ class LatencyBenchmark {
  public:
   LatencyBenchmark(
       const BasicBatchScheduler<BenchmarkBatchTask>::Options& scheduler_options,
-      int64 task_injection_interval_micros, int batch_cpu_cost);
+      int64_t task_injection_interval_micros, int batch_cpu_cost);
 
   LatencyBenchmark(const LatencyBenchmark&) = delete;
   LatencyBenchmark& operator=(const LatencyBenchmark&) = delete;
@@ -229,7 +229,7 @@ class LatencyBenchmark {
 
 LatencyBenchmark::LatencyBenchmark(
     const BasicBatchScheduler<BenchmarkBatchTask>::Options& scheduler_options,
-    int64 task_injection_interval_micros, int batch_cpu_cost)
+    int64_t task_injection_interval_micros, int batch_cpu_cost)
     : scheduler_options_(scheduler_options),
       task_injection_interval_micros_(task_injection_interval_micros),
       batch_cpu_cost_(batch_cpu_cost) {}
@@ -244,7 +244,7 @@ void LatencyBenchmark::RunBenchmark() {
   CHECK_GE(kNumTasks, 100000)
       << "Not enough tasks to report meaningful 99.9% latency";
 
-  const int64 start_time_micros = Env::Default()->NowMicros();
+  const int64_t start_time_micros = Env::Default()->NowMicros();
 
   // Inject the tasks.
   UniformLoadInjector injector;
@@ -256,9 +256,9 @@ void LatencyBenchmark::RunBenchmark() {
       kNumTasks, task_injection_interval_micros_);
 
   // Be sure we were able to more-or-less match our target injection rate.
-  const int64 target_injection_time_micros =
+  const int64_t target_injection_time_micros =
       kNumTasks * task_injection_interval_micros_;
-  const int64 actual_injection_time_micros =
+  const int64_t actual_injection_time_micros =
       Env::Default()->NowMicros() - start_time_micros;
   if (actual_injection_time_micros > 1.1 * target_injection_time_micros) {
     LOG(FATAL) << "Unable to inject tasks at the requested rate";
@@ -270,7 +270,7 @@ void LatencyBenchmark::RunBenchmark() {
   // Be sure the scheduler was able to process the tasks at close to the
   // injection rate. If not, our latency measurements will be dominated by queue
   // waiting time
-  const int64 actual_processing_time_micros =
+  const int64_t actual_processing_time_micros =
       Env::Default()->NowMicros() - start_time_micros;
   if (actual_processing_time_micros > 1.01 * actual_injection_time_micros) {
     LOG(FATAL) << "Unable to keep up with task injection rate";
@@ -335,7 +335,7 @@ void LatencyBenchmark::PerformBatchCpuWork() const {
 }
 
 static void RunThroughputBenchmark(::testing::benchmark::State& state,
-                                   int64 batch_timeout_micros,
+                                   int64_t batch_timeout_micros,
                                    int num_batch_threads) {
   BasicBatchScheduler<BenchmarkBatchTask>::Options scheduler_options;
   const int kMaxBatchSize = 100;
@@ -386,8 +386,8 @@ BENCHMARK(ThroughputBM_LargeTimeout)
     ->Arg(32)
     ->Arg(64);
 
-static void RunLatencyBenchmark(int64 task_injection_interval_micros,
-                                int64 batch_timeout_micros) {
+static void RunLatencyBenchmark(int64_t task_injection_interval_micros,
+                                int64_t batch_timeout_micros) {
   BasicBatchScheduler<BenchmarkBatchTask>::Options scheduler_options;
   const int kMaxBatchSize = 100;
   scheduler_options.max_batch_size = kMaxBatchSize;
@@ -402,8 +402,8 @@ static void RunLatencyBenchmark(int64 task_injection_interval_micros,
 }
 
 static void RunLatencyBenchmarks() {
-  for (const int64 batch_timeout_micros : {0, 1 * 1000, 2 * 1000, 5 * 1000}) {
-    for (const int64 task_injection_interval_micros : {1000, 50, 20}) {
+  for (const int64_t batch_timeout_micros : {0, 1 * 1000, 2 * 1000, 5 * 1000}) {
+    for (const int64_t task_injection_interval_micros : {1000, 50, 20}) {
       std::cout << "Latency benchmark w/ batch timeout "
                 << batch_timeout_micros / 1000.0 << "ms"
                 << "; "

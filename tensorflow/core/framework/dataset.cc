@@ -215,37 +215,64 @@ REGISTER_UNARY_VARIANT_DECODE_FUNCTION(WrappedDatasetVariantWrapper,
 
 }  // namespace
 
+Status GraphDefBuilderWrapper::AddDataset(const DatasetBase* dataset,
+                                          const std::vector<Node*>& inputs,
+                                          Node** output) {
+  return AddDataset(dataset, inputs, {}, output);
+}
+
+Status GraphDefBuilderWrapper::AddDataset(
+    const DatasetBase* dataset, const std::vector<Node*>& inputs,
+    const std::vector<std::pair<StringPiece, AttrValue>>& attrs,
+    Node** output) {
+  std::vector<std::pair<size_t, Node*>> enumerated_inputs(inputs.size());
+  for (size_t i = 0; i < inputs.size(); i++) {
+    enumerated_inputs[i] = std::make_pair(i, inputs[i]);
+  }
+  return AddDataset(dataset, enumerated_inputs, {}, attrs, output);
+}
+
 Status GraphDefBuilderWrapper::AddDataset(
     const DatasetBase* dataset,
     const std::vector<std::pair<size_t, Node*>>& inputs,
     const std::vector<std::pair<size_t, gtl::ArraySlice<Node*>>>& list_inputs,
     const std::vector<std::pair<StringPiece, AttrValue>>& attrs,
     Node** output) {
-  const string& type_string = dataset->type_string();
-  std::unique_ptr<const GraphDefBuilder::Options> opts(
-      new GraphDefBuilder::Options(b_->opts()));
+  return AddDataset(dataset, inputs, list_inputs, attrs,
+                    /*use_dataset_name=*/false, output);
+}
+
+Status GraphDefBuilderWrapper::AddDataset(
+    const DatasetBase* dataset,
+    const std::vector<std::pair<size_t, Node*>>& inputs,
+    const std::vector<std::pair<size_t, gtl::ArraySlice<Node*>>>& list_inputs,
+    const std::vector<std::pair<StringPiece, AttrValue>>& attrs,
+    bool use_dataset_name, Node** output) {
+  auto& type_string = dataset->type_string();
+  auto opts = absl::make_unique<GraphDefBuilder::Options>(b_->opts());
   // TODO(srbs|mrry): Not all datasets have output_types and output_shapes
   // attributes defined. It will be nice to have a consistent pattern.
   bool has_output_types_attr = HasAttr(type_string, "output_types");
   bool has_output_shapes_attr = HasAttr(type_string, "output_shapes");
   if (has_output_shapes_attr) {
-    opts.reset(new GraphDefBuilder::Options(
-        opts->WithAttr("output_shapes", dataset->output_shapes())));
+    opts = absl::make_unique<GraphDefBuilder::Options>(
+        opts->WithAttr("output_shapes", dataset->output_shapes()));
   }
   if (has_output_types_attr) {
-    opts.reset(new GraphDefBuilder::Options(
-        opts->WithAttr("output_types", dataset->output_dtypes())));
+    opts = absl::make_unique<GraphDefBuilder::Options>(
+        opts->WithAttr("output_types", dataset->output_dtypes()));
   }
   for (const auto& attr : attrs) {
-    opts.reset(
-        new GraphDefBuilder::Options(opts->WithAttr(attr.first, attr.second)));
+    opts = absl::make_unique<GraphDefBuilder::Options>(
+        opts->WithAttr(attr.first, attr.second));
   }
   if (opts->HaveError()) {
     return errors::Internal("AddDataset: Failed to build Options with error ",
                             opts->StatusToString());
   }
-  NodeBuilder node_builder(opts->GetNameForOp(type_string), type_string,
-                           opts->op_registry());
+  NodeBuilder node_builder(
+      use_dataset_name ? dataset->node_name() : opts->GetNameForOp(type_string),
+      type_string, opts->op_registry());
   {
     size_t total_size = inputs.size() + list_inputs.size();
     auto inputs_iter = inputs.begin();
@@ -363,7 +390,7 @@ Status IteratorBase::InitializeBase(IteratorContext* ctx,
 }
 
 int64 GetAllocatedBytes(const std::vector<Tensor>& element) {
-  int64 allocated_bytes = 0;
+  int64_t allocated_bytes = 0;
   DatasetBase* dataset;
   for (auto& tensor : element) {
     if (tensor.dtype() == DT_VARIANT &&
@@ -377,7 +404,7 @@ int64 GetAllocatedBytes(const std::vector<Tensor>& element) {
 }
 
 int64 GetTotalBytes(const std::vector<Tensor>& element) {
-  int64 total_bytes = 0;
+  int64_t total_bytes = 0;
   DatasetBase* dataset;
   for (auto& tensor : element) {
     if (tensor.dtype() == DT_VARIANT &&
@@ -519,6 +546,46 @@ void MergeOptions(const protobuf::MessageLite& source,
 
 }  // namespace internal
 
+void DatasetBase::Initialize() {
+  Status s = ComputeNumSources();
+  if (!s.ok()) {
+    LOG(ERROR) << s;
+  }
+  s = MergeOptionsFromInputs();
+  if (!s.ok()) {
+    LOG(ERROR) << s;
+  }
+}
+
+Status DatasetBase::ComputeNumSources() {
+  std::vector<const DatasetBase*> inputs;
+  Status s = InputDatasets(&inputs);
+  if (errors::IsUnimplemented(s)) {
+    return errors::Unimplemented(
+        "Cannot compute input sources for dataset of type ", type_string(),
+        ", because the dataset does not implement `InputDatasets`.");
+  }
+  if (num_sources_ >= 0) {
+    // Already computed.
+    return Status::OK();
+  }
+  num_sources_ = 0;
+  if (inputs.empty()) {
+    num_sources_ = 1;
+    return Status::OK();
+  }
+  for (const auto& input : inputs) {
+    if (input->num_sources() < 0) {
+      return errors::FailedPrecondition(
+          "Cannot compute input sources for dataset of type ", type_string(),
+          ", because sources could not be computed for input dataset of type ",
+          input->type_string());
+    }
+    num_sources_ += input->num_sources();
+  }
+  return Status::OK();
+}
+
 Status DatasetBase::MergeOptionsFromInputs() {
   std::vector<const DatasetBase*> inputs;
   Status s = InputDatasets(&inputs);
@@ -570,23 +637,24 @@ Status DatasetBase::MakeIterator(
   return s;
 }
 
-Status DatasetBase::MakeSplitProvider(
-    std::unique_ptr<SplitProvider>* split_provider) const {
+Status DatasetBase::MakeSplitProviders(
+    std::vector<std::unique_ptr<SplitProvider>>* split_providers) const {
   std::vector<const DatasetBase*> inputs;
   Status s = InputDatasets(&inputs);
   if (errors::IsUnimplemented(s)) {
     return errors::Unimplemented(
-        "Cannot create a split provider for dataset of type ", type_string(),
+        "Cannot create split providers for dataset of type ", type_string(),
         ", because the dataset implements neither `InputDatasets` nor "
         "`MakeSplitProvider`.");
   }
   if (inputs.size() != 1) {
     return errors::Unimplemented(
-        "Cannot create a split provider for dataset of type ", type_string(),
-        ", because the dataset is not unary (having arity ", inputs.size(),
+        "Cannot create split providers for dataset of type ", type_string(),
+        ", because the dataset is not unary (instead having arity ",
+        inputs.size(),
         "), and no custom implementation of `MakeSplitProvider` is defined.");
   }
-  return inputs[0]->MakeSplitProvider(split_provider);
+  return inputs[0]->MakeSplitProviders(split_providers);
 }
 
 Status DatasetBase::InputDatasets(
@@ -728,7 +796,7 @@ Status DatasetBaseIterator::GetNext(IteratorContext* ctx,
   DVLOG(3) << prefix() << " GetNext enter";
   auto model = ctx->model();
   if (model && model->collect_resource_usage() && node_) {
-    int64 now_nanos = EnvTime::NowNanos();
+    int64_t now_nanos = EnvTime::NowNanos();
     auto output = node_->output();
     if (output) {
       output->record_stop(now_nanos);
@@ -741,7 +809,7 @@ Status DatasetBaseIterator::GetNext(IteratorContext* ctx,
     RecordElement(ctx, out_tensors);
   }
   if (model && model->collect_resource_usage() && node_) {
-    int64 now_nanos = EnvTime::NowNanos();
+    int64_t now_nanos = EnvTime::NowNanos();
     node_->record_stop(now_nanos);
     auto output = node_->output();
     if (output) {
@@ -767,7 +835,7 @@ Status DatasetBaseIterator::Skip(IteratorContext* ctx, int num_to_skip,
   DVLOG(3) << prefix() << " Skip enter";
   auto model = ctx->model();
   if (model && model->collect_resource_usage() && node_) {
-    int64 now_nanos = EnvTime::NowNanos();
+    int64_t now_nanos = EnvTime::NowNanos();
     auto output = node_->output();
     if (output) {
       output->record_stop(now_nanos);
@@ -776,7 +844,7 @@ Status DatasetBaseIterator::Skip(IteratorContext* ctx, int num_to_skip,
   }
   Status s = SkipInternal(ctx, num_to_skip, end_of_sequence, num_skipped);
   if (model && model->collect_resource_usage() && node_) {
-    int64 now_nanos = EnvTime::NowNanos();
+    int64_t now_nanos = EnvTime::NowNanos();
     node_->record_stop(now_nanos);
     auto output = node_->output();
     if (output) {
@@ -825,10 +893,7 @@ void DatasetOpKernel::Compute(OpKernelContext* ctx) {
     Tensor* output = nullptr;
     OP_REQUIRES_OK(ctx, ctx->allocate_output(0, TensorShape({}), &output));
     OP_REQUIRES_OK(ctx, StoreDatasetInVariantTensor(dataset, output));
-    auto status = dataset->MergeOptionsFromInputs();
-    if (!status.ok()) {
-      LOG(ERROR) << status;
-    }
+    dataset->Initialize();
   }
 }
 

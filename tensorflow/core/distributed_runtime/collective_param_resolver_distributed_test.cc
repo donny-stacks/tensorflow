@@ -126,6 +126,19 @@ class FakeCache : public TestWorkerCache {
   }
 };
 
+class FakeNcclCommunicator : public NcclCommunicatorInterface {
+ public:
+  // We only need to define GenerateCommunicatorKey().
+  string GenerateCommunicatorKey() override { return "mock-communicator-key"; }
+
+  void Enqueue(std::shared_ptr<CollectiveContext> col_ctx,
+               StatusCallback done) override {
+    done(Status::OK());
+  }
+
+  void StartAbort(const Status& s) override {}
+};
+
 class DeviceResDistTest : public ::testing::Test {
  public:
   ~DeviceResDistTest() override {
@@ -168,7 +181,8 @@ class DeviceResDistTest : public ::testing::Test {
     cp_resolvers_[worker_name] =
         absl::make_unique<CollectiveParamResolverDistributed>(
             config, device_mgrs_[worker_name].get(),
-            dev_resolvers_[worker_name].get(), &wc_, worker_name);
+            dev_resolvers_[worker_name].get(), &nccl_communicator_, &wc_,
+            worker_name);
     workers_[worker_name] = absl::make_unique<FakeWorker>(
         worker_name, device_mgrs_[worker_name].get(),
         cp_resolvers_[worker_name].get());
@@ -267,16 +281,16 @@ class DeviceResDistTest : public ::testing::Test {
         int idx = wi * num_devices + di;
         TF_ASSERT_OK(status_[device_name]);
         EXPECT_EQ(cp_[device_name]->default_rank, idx);
-        EXPECT_EQ(cp_[device_name]->group.device_names.size(), dev_count);
-        EXPECT_EQ(cp_[device_name]->group.device_names[idx], device_name);
+        EXPECT_EQ(cp_[device_name]->group.devices.size(), dev_count);
+        EXPECT_EQ(cp_[device_name]->group.devices[idx].name(), device_name);
         EXPECT_EQ(cp_[device_name]->group.task_names[idx], task_name);
         ValidateDeviceResolver(*cp_[device_name], task_name);
         if (idx > 0) {
           EXPECT_EQ(cp_[dev0]->group.runtime_details.communicator_key,
                     cp_[device_name]->group.runtime_details.communicator_key);
           for (int i = 0; i < dev_count; ++i) {
-            EXPECT_EQ(cp_[dev0]->group.device_names[i],
-                      cp_[device_name]->group.device_names[i]);
+            EXPECT_EQ(cp_[dev0]->group.devices[i].name(),
+                      cp_[device_name]->group.devices[i].name());
             EXPECT_EQ(cp_[dev0]->group.task_names[i],
                       cp_[device_name]->group.task_names[i]);
           }
@@ -286,10 +300,10 @@ class DeviceResDistTest : public ::testing::Test {
   }
 
   void ValidateDeviceResolver(const CollectiveParams& cp, const string& task) {
-    for (const string& device_name : cp.group.device_names) {
+    for (const DeviceAttributes& device : cp.group.devices) {
       DeviceAttributes attributes;
-      TF_ASSERT_OK(
-          dev_resolvers_[task]->GetDeviceAttributes(device_name, &attributes));
+      TF_ASSERT_OK(dev_resolvers_[task]->GetDeviceAttributes(device.name(),
+                                                             &attributes));
     }
   }
 
@@ -313,6 +327,7 @@ class DeviceResDistTest : public ::testing::Test {
   }
 
   FakeCache wc_;
+  FakeNcclCommunicator nccl_communicator_;
   CancellationManager cm_;
   // Below are keyed by task names.
   absl::flat_hash_map<string, std::unique_ptr<DeviceMgr>> device_mgrs_;
@@ -383,34 +398,6 @@ TEST_F(DeviceResDistTest, BroadcastSourceRank3) {
   IssueRequests(num_workers, num_devices);
   ValidateCollectiveParams(num_workers, num_devices);
 }
-
-#if !GOOGLE_CUDA && !TENSORFLOW_USE_ROCM
-namespace {
-// A mock NcclReducer for testing group runtime details initialization with CPU
-// builds.  The only meaningful function in this class is
-// `InitializeCollectiveGroupRuntimeDetails`.
-class MockNcclReducer : public CollectiveImplementationInterface {
- public:
-  MockNcclReducer() = default;
-
-  Status InitializeCollectiveParams(CollectiveParams*) override {
-    return Status::OK();
-  }
-  Status InitializeCollectiveContext(
-      std::shared_ptr<CollectiveContext>) override {
-    return Status::OK();
-  }
-  Status InitializeCollectiveGroupRuntimeDetails(
-      CollGroupRuntimeDetails* col_group_runtime_details) override {
-    col_group_runtime_details->communicator_key = "mock-communicator-key";
-    return Status::OK();
-  }
-  void Run(StatusCallback done) override {}
-};
-}  // namespace
-
-REGISTER_COLLECTIVE(NcclReduce, MockNcclReducer);
-#endif
 
 TEST_F(DeviceResDistTest, Workers4Devices3) {
   const int num_workers = 4;

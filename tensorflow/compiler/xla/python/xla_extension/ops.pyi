@@ -68,6 +68,15 @@ def AllReduce(
     replica_groups: Sequence[_ReplicaGroup] = ...,
     channel_id: Optional[ChannelHandle] = ...,
     shape_with_layout: Optional[_Layout] = ...) -> XlaOp: ...
+def ReduceScatter(
+    operand: XlaOp,
+    computation: XlaComputation,
+    scatter_dimension: int,
+    shard_count: int,
+    replica_groups: Sequence[_ReplicaGroup] = ...,
+    channel_id: Optional[ChannelHandle] = ...,
+    layout: Optional[_Layout] = ...,
+    use_global_device_ids: Optional[bool] = ...) -> XlaOp: ...
 def AllToAll(
     operand: XlaOp,
     split_dimension: int,
@@ -112,9 +121,9 @@ def ConvGeneralDilated(
     rhs: XlaOp,
     window_strides: Sequence[int],
     padding: Sequence[Tuple[int, int]],
-    lhs_dilation: Sequence[int], 
+    lhs_dilation: Sequence[int],
     rhs_dilation: Sequence[int],
-    dimension_numbers: _ConvDimensionNumbers, 
+    dimension_numbers: _ConvDimensionNumbers,
     feature_group_count: int = ...,
     batch_group_count: int = ...,
     precision_config: PrecisionConfig_Precision = ...,
@@ -377,6 +386,7 @@ def IsFinite(__arg: XlaOp) -> XlaOp: ...
 def Neg(__arg: XlaOp) -> XlaOp: ...
 def Sqrt(__arg: XlaOp) -> XlaOp: ...
 def Rsqrt(__arg: XlaOp) -> XlaOp: ...
+def Cbrt(__arg: XlaOp) -> XlaOp: ...
 def Square(__arg: XlaOp) -> XlaOp: ...
 def Reciprocal(__arg: XlaOp) -> XlaOp: ...
 def Erfc(__arg: XlaOp) -> XlaOp: ...

@@ -48,7 +48,7 @@ namespace {
 // cares about collecting the CPU time needed to execute a captured function.
 class SimpleStepStatsCollector : public StepStatsCollectorInterface {
  public:
-  void IncrementProcessingTime(int64 delta) {
+  void IncrementProcessingTime(int64_t delta) {
     mutex_lock l(mu_);
     processing_time_ += delta;
   }
@@ -96,7 +96,7 @@ class SimpleStepStatsCollector : public StepStatsCollectorInterface {
 
     void SetOutput(int slot, const Tensor* tensor) override {}
 
-    void SetScheduled(int64 nanos) override {}
+    void SetScheduled(int64_t nanos) override {}
 
    private:
     int64 start_time_ns_ = 0;
@@ -376,7 +376,7 @@ class BorrowedArgsCallFrame : public CallFrameBase {
 
 Status MakeIteratorFromInputElement(
     IteratorContext* ctx, const IteratorBase* parent,
-    const std::vector<Tensor>& input_element, int64 thread_index,
+    const std::vector<Tensor>& input_element, int64_t thread_index,
     const InstantiatedCapturedFunction& inst_captured_func, StringPiece prefix,
     std::unique_ptr<IteratorBase>* out_iterator) {
   return MakeIteratorFromInputElement(ctx, parent, input_element, thread_index,
@@ -386,7 +386,7 @@ Status MakeIteratorFromInputElement(
 
 Status MakeIteratorFromInputElement(
     IteratorContext* ctx, const IteratorBase* parent,
-    const std::vector<Tensor>& input_element, int64 thread_index,
+    const std::vector<Tensor>& input_element, int64_t thread_index,
     const InstantiatedCapturedFunction& inst_captured_func, StringPiece prefix,
     std::unique_ptr<IteratorBase>* out_iterator,
     const std::shared_ptr<model::Node>& node) {
@@ -408,13 +408,13 @@ Status MakeIteratorFromInputElement(
 
   // Create an iterator for the dataset that was returned by `f`.
   std::string iterator_prefix = strings::StrCat(prefix, "[", thread_index, "]");
-  if (ctx->split_provider() == nullptr) {
+  if (ctx->split_providers().empty()) {
     return returned_dataset->MakeIterator(ctx, parent, iterator_prefix,
                                           out_iterator);
   }
-  // Strip out the split provider so that it doesn't apply to sub-iterators.
+  // Strip out the split providers so that they don't apply to sub-iterators.
   IteratorContext::Params params(ctx);
-  params.split_provider = nullptr;
+  params.split_providers.clear();
   return returned_dataset->MakeIterator(IteratorContext(std::move(params)),
                                         parent, iterator_prefix, out_iterator);
 }

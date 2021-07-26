@@ -46,7 +46,7 @@ class BatchResourceBase : public ResourceBase {
 
   // Ingests data from one invocation of the batch op. The data is enqueued to
   // be combined with others into a batch, asynchronously.
-  Status RegisterInput(int64 guid, OpKernelContext* context,
+  Status RegisterInput(int64_t guid, OpKernelContext* context,
                        const string& batcher_queue_name,
                        AsyncOpKernel::DoneCallback done_callback);
 
@@ -134,13 +134,14 @@ class BatchResourceBase : public ResourceBase {
         allowed_batch_sizes_(std::move(allowed_batch_sizes)) {}
 
   static BatcherT::QueueOptions GetBatcherQueueOptions(
-      int32 num_batch_threads, int32 max_batch_size, int32 batch_timeout_micros,
-      int32 max_enqueued_batches, const std::vector<int32>& allowed_batch_sizes,
+      int32_t num_batch_threads, int32_t max_batch_size,
+      int32_t batch_timeout_micros, int32_t max_enqueued_batches,
+      const std::vector<int32>& allowed_batch_sizes,
       bool enable_large_batch_splitting);
 
   static AdaptiveBatcherT::QueueOptions GetAdaptiveBatcherQueueOptions(
-      int32 max_batch_size, int32 batch_timeout_micros,
-      int32 max_enqueued_batches, bool enable_large_batch_splitting,
+      int32_t max_batch_size, int32_t batch_timeout_micros,
+      int32_t max_enqueued_batches, bool enable_large_batch_splitting,
       const std::vector<int32>& allowed_batch_sizes);
 
  private:

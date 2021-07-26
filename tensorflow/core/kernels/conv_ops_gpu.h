@@ -22,6 +22,7 @@ limitations under the License.
 #include <unordered_map>
 
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/kernels/gpu_utils.h"
 #include "tensorflow/core/lib/gtl/inlined_vector.h"
@@ -34,7 +35,7 @@ namespace tensorflow {
 // Return the workspace memory limit in bytes. If no value is set, return the
 // default value.
 int64 GetDnnWorkspaceLimit(const string& envvar_in_mb,
-                           int64 default_value_in_bytes);
+                           int64_t default_value_in_bytes);
 
 // A class to provide scratch-space allocator for Stream-Executor Cudnn
 // callback. TensorFlow is responsible for releasing the temporary buffers after
@@ -42,11 +43,11 @@ int64 GetDnnWorkspaceLimit(const string& envvar_in_mb,
 class DnnScratchAllocator : public se::ScratchAllocator {
  public:
   virtual ~DnnScratchAllocator() {}
-  DnnScratchAllocator(int64 memory_limit, OpKernelContext* context)
+  DnnScratchAllocator(int64_t memory_limit, OpKernelContext* context)
       : memory_limit_(memory_limit), total_byte_size_(0), context_(context) {}
   int64 GetMemoryLimitInBytes() override { return memory_limit_; }
   se::port::StatusOr<se::DeviceMemory<uint8>> AllocateBytes(
-      int64 byte_size) override {
+      int64_t byte_size) override {
     Tensor temporary_memory;
     if (byte_size < 0) {
       return se::port::Status{se::port::error::INVALID_ARGUMENT,
@@ -91,8 +92,8 @@ class DnnScratchAllocator : public se::ScratchAllocator {
 class ConvParameters {
  public:
   using SpatialArray = gtl::InlinedVector<int64, 3>;
-  ConvParameters(int64 batch, int64 in_depths, const SpatialArray& in,
-                 TensorFormat data_format, int64 out_depths,
+  ConvParameters(int64_t batch, int64_t in_depths, const SpatialArray& in,
+                 TensorFormat data_format, int64_t out_depths,
                  const SpatialArray& filter, const SpatialArray& dilation,
                  const SpatialArray& stride, const SpatialArray& padding,
                  DataType dtype, int device_id, int group_count = 1)
@@ -110,13 +111,13 @@ class ConvParameters {
         group_count_(group_count) {
     hash_code_ = batch;
     hash_code_ = Hash64Combine(hash_code_, in_depths);
-    for (int64 val : in) hash_code_ = Hash64Combine(hash_code_, val);
+    for (int64_t val : in) hash_code_ = Hash64Combine(hash_code_, val);
     hash_code_ = Hash64Combine(hash_code_, data_format);
     hash_code_ = Hash64Combine(hash_code_, out_depths);
-    for (int64 val : filter) hash_code_ = Hash64Combine(hash_code_, val);
-    for (int64 val : dilation) hash_code_ = Hash64Combine(hash_code_, val);
-    for (int64 val : stride) hash_code_ = Hash64Combine(hash_code_, val);
-    for (int64 val : padding) hash_code_ = Hash64Combine(hash_code_, val);
+    for (int64_t val : filter) hash_code_ = Hash64Combine(hash_code_, val);
+    for (int64_t val : dilation) hash_code_ = Hash64Combine(hash_code_, val);
+    for (int64_t val : stride) hash_code_ = Hash64Combine(hash_code_, val);
+    for (int64_t val : padding) hash_code_ = Hash64Combine(hash_code_, val);
     hash_code_ = Hash64Combine(hash_code_, dtype);
     hash_code_ = Hash64Combine(hash_code_, device_id);
     hash_code_ = Hash64Combine(hash_code_, group_count);
@@ -132,37 +133,15 @@ class ConvParameters {
   uint64 hash() const { return hash_code_; }
 
   string ToString() const {
-    // clang-format off
-    return strings::StrCat(
-        batch_, ", ", in_depths_, ", ",
-        "(", str_util::Join(in_, ", "), "), ",
-        ::tensorflow::ToString(data_format_), ", ",
-        out_depths_, ", ",
-        "(", str_util::Join(filter_, ", "), "), ",
-        "(", str_util::Join(dilation_, ", "), "), ",
-        "(", str_util::Join(stride_, ", "), "), ",
-        "(", str_util::Join(padding_, ", "), "), ",
-        dtype_, ", ",
-        device_id_,
-        group_count_);
-    // clang-format on
-  }
-
-  // The purpose of this function is to disable winograd nonfused conv algorithm
-  // for certain input parameters so as to avoid a bug in cuDNNv5 and cuDNNv6.
-  template <typename T>
-  bool ShouldIncludeWinogradNonfusedAlgo(
-      se::StreamExecutor* stream_exec) const {
-    auto* dnn_support = stream_exec->AsDnn();
-    if (!dnn_support) {
-      return false;
-    }
-    // Skip this check for cuDNN 7 and newer.
-    auto version = dnn_support->GetVersion();
-    if (version.ok() && version.ValueOrDie().major_version() >= 7) {
-      return true;
-    }
-    return ShouldIncludeWinogradNonfusedAlgoPreCudnn7<T>();
+    return absl::StrFormat(
+        "batch=%d, in_depth=%d, in=(%s), out_depth=%d, filter=(%s), "
+        "%s, %s, dilation=(%s), stride=(%s), padding=(%s), group_count=%d, "
+        "device_id=%d",
+        batch_, in_depths_, absl::StrJoin(in_, ","), out_depths_,
+        absl::StrJoin(filter_, ","), DataTypeString(dtype_),
+        ::tensorflow::ToString(data_format_), absl::StrJoin(dilation_, ","),
+        absl::StrJoin(stride_, ","), absl::StrJoin(padding_, ","), group_count_,
+        device_id_);
   }
 
  protected:
@@ -179,24 +158,9 @@ class ConvParameters {
   uint64 hash_code_;
 
  private:
-  friend struct ConvParametersPeer;  // For testing purposes.
-
   static const SpatialArray& CheckSpatialArraySize(const SpatialArray& array) {
     CHECK_LE(array.size(), 3);  // Catch corruptions related to b/124313574.
     return array;
-  }
-
-  template <typename T>
-  bool ShouldIncludeWinogradNonfusedAlgoPreCudnn7() const {
-    int64 total_size = 16 * std::ceil(batch_ / 16.0) *
-                       std::max(in_depths_, out_depths_) * in_[0] * in_[1] *
-                       sizeof(T);
-    int64 threshold = 1LL << 31;
-    if (total_size >= threshold) {
-      return false;
-    } else {
-      return true;
-    }
   }
 
   int64 batch_;

@@ -29,11 +29,10 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/lite/flatbuffer_export.h"
-#include "tensorflow/compiler/mlir/lite/metrics/error_collector.h"
+#include "tensorflow/compiler/mlir/lite/metrics/error_collector_inst.h"
 #include "tensorflow/compiler/mlir/lite/quantization/quantization_config.h"
 #include "tensorflow/compiler/mlir/lite/transforms/passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.h"
-#include "tensorflow/compiler/mlir/tensorflow/transforms/decode_constant.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/tf_mlir_translate.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/error_util.h"
@@ -165,14 +164,30 @@ Status ConvertTFExecutorToTFLOrFlatbuffer(
   mlir::StatusScopedDiagnosticHandler statusHandler(module.getContext(),
                                                     /*propagate=*/true);
 
-  if (failed(IsValidGraph(module)) || failed(pass_manager->run(module))) {
+  if (failed(IsValidGraph(module))) {
     return statusHandler.ConsumeStatus();
+  }
+
+  if (failed(pass_manager->run(module))) {
+    auto status = statusHandler.ConsumeStatus();
+    mlir::TFL::ErrorCollector* collector =
+        mlir::TFL::ErrorCollector::GetErrorCollector();
+    for (const auto& error_data : collector->CollectedErrors()) {
+      if (error_data.subcomponent() == "FreezeGlobalTensorsPass") {
+        return errors::InvalidArgument(
+            "Variable constant folding is failed. Please consider using "
+            "enabling `experimental_enable_resource_variables` flag in the "
+            "TFLite converter object. For example, "
+            "converter.experimental_enable_resource_variables = True");
+      }
+    }
+    return status;
   }
 
   if (export_to_mlir) {
     llvm::raw_string_ostream os(*result);
     module.print(os);
-    return Status::OK();
+    return statusHandler.ConsumeStatus();
   }
 
   // Write MLIR TFLite dialect into FlatBuffer

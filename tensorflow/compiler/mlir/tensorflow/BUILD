@@ -4,7 +4,7 @@ load("//tensorflow:tensorflow.bzl", "filegroup")
 # buildifier: disable=same-origin-load
 load("//tensorflow:tensorflow.bzl", "get_compatible_with_cloud")
 load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
-load("//third_party/mlir:tblgen.bzl", "gentbl_cc_library")
+load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load("//tensorflow:tensorflow.bzl", "if_google", "tf_cc_test", "tf_gen_op_wrapper_py")
 
 package(
@@ -14,10 +14,14 @@ package(
 
 package_group(
     name = "friends",
-    includes = ["//third_party/mlir:subpackages"],
+    includes = ["@llvm-project//mlir:subpackages"],
     packages = [
+        "//platforms/darwinn/tools/mlir_fuzzer/...",
         "//tensorflow/compiler/...",
+        "//tensorflow/core/runtime_fallback/test/...",
+        "//tensorflow/core/tfrt/saved_model/...",
         "//tensorflow/core/tfrt/utils/...",
+        "//tensorflow/cc/...",
         "//tensorflow/python/...",
     ] + if_google([
         "//learning/brain/experimental/mlir/tflite/tfmrt/...",
@@ -31,6 +35,7 @@ package_group(
         "//learning/serving/contrib/tfrt/mlir/...",
         "//platforms/darwinn/contrib/waymo/...",
         "//platforms/xla/sparse_core/...",
+        "//waymo/ml/compiler/...",
     ]),
 )
 
@@ -49,13 +54,12 @@ filegroup(
         "ir/tf_op_interfaces.td",
         "ir/tf_ops.td",
         "ir/tfrt_ops.td",
+        "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
+        "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
+        "@llvm-project//mlir:LoopLikeInterfaceTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:SideEffectTdFiles",
-        "@llvm-project//mlir:include/mlir/IR/SymbolInterfaces.td",
         "@llvm-project//mlir:include/mlir/Interfaces/CallInterfaces.td",
-        "@llvm-project//mlir:include/mlir/Interfaces/ControlFlowInterfaces.td",
-        "@llvm-project//mlir:include/mlir/Interfaces/InferTypeOpInterface.td",
-        "@llvm-project//mlir:include/mlir/Interfaces/LoopLikeInterface.td",
     ],
 )
 
@@ -74,10 +78,10 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "ir/tf_op_interfaces.td",
-    td_srcs = [
+    test = True,
+    deps = [
         ":tensorflow_ops_td_files",
     ],
-    test = True,
 )
 
 gentbl_cc_library(
@@ -99,10 +103,10 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "ir/tf_ops.td",
-    td_srcs = [
+    test = True,
+    deps = [
         ":tensorflow_ops_td_files",
     ],
-    test = True,
 )
 
 cc_library(
@@ -160,7 +164,7 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "ir/tf_ops.td",
-    td_srcs = [
+    deps = [
         ":tensorflow_ops_td_files",
     ],
 )
@@ -180,7 +184,7 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "ir/tfrt_ops.td",
-    td_srcs = [
+    deps = [
         ":tensorflow_ops_td_files",
     ],
 )
@@ -219,7 +223,7 @@ tf_ops_category_list = [
         ],
         tblgen = "@llvm-project//mlir:mlir-tblgen",
         td_file = "ir/tf_ops.td",
-        td_srcs = [
+        deps = [
             ":tensorflow_ops_td_files",
         ],
     ),
@@ -246,7 +250,7 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "ir/tf_ops.td",
-    td_srcs = [
+    deps = [
         ":tensorflow_ops_td_files",
     ],
 )
@@ -270,12 +274,11 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "ir/tf_saved_model_ops.td",
-    td_srcs = [
-        "@llvm-project//mlir:include/mlir/IR/OpBase.td",
-        "@llvm-project//mlir:include/mlir/Dialect/StandardOps/IR/Ops.td",
-        "@llvm-project//mlir:include/mlir/IR/SymbolInterfaces.td",
-    ],
     test = True,
+    deps = [
+        "@llvm-project//mlir:OpBaseTdFiles",
+        "@llvm-project//mlir:StdOpsTdFiles",
+    ],
 )
 
 gentbl_cc_library(
@@ -297,12 +300,12 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "ir/tf_executor_ops.td",
-    td_srcs = [
-        ":tensorflow_ops_td_files",
-        "@llvm-project//mlir:include/mlir/Dialect/StandardOps/IR/Ops.td",
-        "@llvm-project//mlir:include/mlir/IR/OpBase.td",
-    ],
     test = True,
+    deps = [
+        ":tensorflow_ops_td_files",
+        "@llvm-project//mlir:OpBaseTdFiles",
+        "@llvm-project//mlir:StdOpsTdFiles",
+    ],
 )
 
 gentbl_cc_library(
@@ -324,13 +327,13 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "ir/tf_device_ops.td",
-    td_srcs = [
-        "@llvm-project//mlir:SideEffectTdFiles",
-        "@llvm-project//mlir:include/mlir/Dialect/StandardOps/IR/Ops.td",
-        "@llvm-project//mlir:include/mlir/IR/OpBase.td",
-        "@llvm-project//mlir:include/mlir/Interfaces/ControlFlowInterfaces.td",
-    ],
     test = True,
+    deps = [
+        "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
+        "@llvm-project//mlir:OpBaseTdFiles",
+        "@llvm-project//mlir:SideEffectTdFiles",
+        "@llvm-project//mlir:StdOpsTdFiles",
+    ],
 )
 
 gentbl_cc_library(
@@ -344,8 +347,23 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "transforms/canonicalize.td",
-    td_srcs = [
+    deps = [
         ":tensorflow_ops_td_files",
+    ],
+)
+
+gentbl_cc_library(
+    name = "tensorflow_reduce_patterns_inc_gen",
+    tbl_outs = [
+        (
+            ["-gen-rewriters"],
+            "transforms/reducer/tf_reduce_patterns.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "transforms/reducer/tf_mlir_reduce_patterns.td",
+    deps = [
+        "//tensorflow/compiler/mlir/tensorflow:tensorflow_ops_td_files",
     ],
 )
 
@@ -360,14 +378,11 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "transforms/legalize_hlo_patterns.td",
-    td_relative_includes = [
-        "../hlo/include",
-    ],
-    td_srcs = [
+    deps = [
         "//tensorflow/compiler/mlir/hlo:hlo_ops_td_files",
+        "//tensorflow/compiler/mlir/tensorflow:tensorflow_ops_td_files",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:StdOpsTdFiles",
-        "//tensorflow/compiler/mlir/tensorflow:tensorflow_ops_td_files",
     ],
 )
 
@@ -734,7 +749,7 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "transforms/decompose_resource_ops.td",
-    td_srcs = [
+    deps = [
         ":tensorflow_ops_td_files",
         "@llvm-project//mlir:StdOpsTdFiles",
     ],
@@ -768,7 +783,7 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "transforms/tf_data_optimization.td",
-    td_srcs = [
+    deps = [
         ":tensorflow_ops_td_files",
         "@llvm-project//mlir:StdOpsTdFiles",
     ],
@@ -980,7 +995,7 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "transforms/tf_passes.td",
-    td_srcs = [
+    deps = [
         "@llvm-project//mlir:PassBaseTdFiles",
     ],
 )
@@ -1003,7 +1018,7 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "transforms/tf_device_passes.td",
-    td_srcs = [
+    deps = [
         "@llvm-project//mlir:PassBaseTdFiles",
     ],
 )
@@ -1026,30 +1041,30 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "transforms/tf_savedmodel_passes.td",
-    td_srcs = [
+    deps = [
         "@llvm-project//mlir:PassBaseTdFiles",
     ],
 )
 
 gentbl_cc_library(
-    name = "tf_saved_model_test_pass_inc_gen",
+    name = "tf_test_passes_inc_gen",
     compatible_with = get_compatible_with_cloud(),
     tbl_outs = [
         (
             [
                 "-gen-pass-decls",
-                "-name=TensorFlowSavedModelTest",
+                "-name=TensorFlowTest",
             ],
-            "transforms/tf_saved_model_test_passes.h.inc",
+            "transforms/test_passes.h.inc",
         ),
         (
             ["-gen-pass-doc"],
-            "g3doc/includes/tf_saved_model_test_passes.md",
+            "g3doc/includes/tf_test_passes.md",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "transforms/tf_saved_model_test_passes.td",
-    td_srcs = [
+    td_file = "transforms/tf_test_passes.td",
+    deps = [
         "@llvm-project//mlir:PassBaseTdFiles",
     ],
 )
@@ -1063,12 +1078,11 @@ cc_library(
         "transforms/bridge_pass.cc",
         "transforms/cluster_formation.cc",
         "transforms/cluster_ops_by_policy.cc",
-        "transforms/cluster_ops_by_policy_pass.cc",
         "transforms/cluster_outlining.cc",
         "transforms/cluster_tf_ops_pass.cc",
         "transforms/collection_ops_util.cc",
         "transforms/constant_op_device_assignment.cc",
-        "transforms/cross_host_transfer.cc",
+        "transforms/convert_launch_func_to_tf_call.cc",
         "transforms/decompose_resource_ops_pass.cc",
         "transforms/device_attribute_to_launch.cc",
         "transforms/device_index_selector.cc",
@@ -1119,17 +1133,13 @@ cc_library(
         "transforms/tensor_array_ops_decomposition.cc",
         "transforms/tensor_device_copy_conversion.cc",
         "transforms/tensor_list_ops_decomposition.cc",
-        "transforms/test_cluster_ops_by_policy.cc",
         "transforms/test_resource_alias_analysis.cc",
-        "transforms/test_side_effect_analysis.cc",
-        "transforms/test_visitor_util.cc",
         "transforms/tf_data_optimization_pass.cc",
         "transforms/tf_device_assignment.cc",
         "transforms/tf_device_replication_pass.cc",
         "transforms/tpu_cluster_cleanup_attributes.cc",
         "transforms/tpu_cluster_formation.cc",
         "transforms/tpu_colocate_composite_resource_ops.cc",
-        "transforms/tpu_compile_op_replication_pass.cc",
         "transforms/tpu_device_propagation.cc",
         "transforms/tpu_dynamic_layout_pass.cc",
         "transforms/tpu_extract_head_tail_outside_compilation.cc",
@@ -1245,23 +1255,30 @@ cc_library(
         "transforms/init_text_file_to_import_test_pass.cc",
         "transforms/initialize_variables_in_session_init_test_pass.cc",
         "transforms/lift_variables_test_pass.cc",
-        "transforms/lower_tf_pass.cc",
+        "transforms/lower_tf_test_pass.cc",
         "transforms/mark_initialized_variables_test_pass.cc",
+        "transforms/test_cluster_ops_by_policy.cc",
+        "transforms/test_passes.h.inc",
+        "transforms/test_side_effect_analysis.cc",
+        "transforms/test_visitor_util.cc",
         "transforms/tf_saved_model_freeze_variables_test_pass.cc",
     ],
     hdrs = [
         "transforms/test_passes.h",
         "transforms/test_passes_detail.h",
-        "transforms/tf_saved_model_test_passes.h.inc",
     ],
     deps = [
+        ":error_util",
         ":fake_session",
         ":lift_variables_lib",
         ":lower_tf_lib",
         ":mark_initialized_variables_lib",
         ":tensorflow",
+        ":tensorflow_analysis",
+        ":tensorflow_passes",
         ":tf_saved_model_passes",
-        ":tf_saved_model_test_pass_inc_gen",
+        ":tf_test_passes_inc_gen",
+        ":visitor_util",
         "//tensorflow/core:core_cpu",
         "//tensorflow/core:core_cpu_lib",
         "//tensorflow/core:framework",
@@ -1668,23 +1685,6 @@ cc_library(
 )
 
 cc_library(
-    name = "decode_constant_pass",
-    srcs = [
-        "transforms/decode_constant.cc",
-    ],
-    hdrs = [
-        "transforms/decode_constant.h",
-    ],
-    deps = [
-        ":convert_tensor",
-        ":tensorflow",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Pass",
-    ],
-    alwayslink = 1,
-)
-
-cc_library(
     name = "tf_dialect_passes",
     srcs = [
         "transforms/constant_fold.cc",
@@ -1695,7 +1695,6 @@ cc_library(
     ],
     deps = [
         ":convert_tensor",
-        ":decode_constant_pass",
         ":eval_util",
         ":tensorflow",
         ":tensorflow_traits",
@@ -1874,7 +1873,7 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "transforms/optimize.td",
-    td_srcs = [
+    deps = [
         ":tensorflow_ops_td_files",
         "@llvm-project//mlir:StdOpsTdFiles",
     ],
@@ -2053,7 +2052,7 @@ gentbl_cc_library(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "transforms/lower_tf.td",
-    td_srcs = [
+    deps = [
         ":tensorflow_ops_td_files",
         "@llvm-project//mlir:StdOpsTdFiles",
     ],

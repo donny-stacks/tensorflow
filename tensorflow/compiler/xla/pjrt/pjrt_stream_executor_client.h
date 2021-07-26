@@ -176,6 +176,19 @@ class PjRtStreamExecutorClient : public PjRtClient {
     return absl::optional<std::string>();
   }
 
+  StatusOr<std::string> SerializeExecutable(
+      const PjRtExecutable& executable) const override {
+    return Unimplemented("SerializeExecutable not implemented on %s",
+                         platform_name());
+  }
+
+  StatusOr<std::unique_ptr<PjRtExecutable>> DeserializeExecutable(
+      absl::string_view serialized, std::unique_ptr<HloModule> hlo_module,
+      CompileOptions options) override {
+    return Unimplemented("DeserializeExecutable not implemented on %s",
+                         platform_name());
+  }
+
   StatusOr<std::unique_ptr<HloCostAnalysis>> GetHloCostAnalysis() override;
 
   // Creates a buffer on the device without initializing or copying any data.
@@ -273,10 +286,20 @@ class PjRtStreamExecutorClient : public PjRtClient {
   }
 
   virtual Status CopyRawSubBufferToHost(PjRtBuffer* buffer, void* dst,
-                                        int64 offset, int64 transfer_size,
+                                        int64_t offset, int64_t transfer_size,
                                         std::function<void(Status)> on_ready) {
     return Unimplemented("Raw copies to host not implemented.");
   }
+
+  // Helper function for creating PjRtStreamExecutorExecutables. Modifies
+  // `options` in-place.
+  struct ExecutableExtras {
+    std::shared_ptr<DeviceAssignment> device_assignment;
+    std::vector<PjRtExecutable::LogicalDeviceIds>
+        addressable_device_logical_ids;
+    std::vector<PjRtDevice*> addressable_devices;
+  };
+  StatusOr<ExecutableExtras> GetExecutableExtras(CompileOptions* options);
 
   const PjRtPlatformId platform_id_;
   const std::string platform_name_;
@@ -525,7 +548,7 @@ class PjRtStreamExecutorBuffer : public PjRtBuffer {
 
   StatusOr<size_t> GetOnDeviceSizeInBytes() const override;
 
-  Status CopyRawToHost(void* dst, int64 offset, int64 transfer_size,
+  Status CopyRawToHost(void* dst, int64_t offset, int64_t transfer_size,
                        std::function<void(Status)> on_ready) override;
 
   // Drops the buffer's reference to its associated device memory, leaving the
@@ -669,7 +692,7 @@ class PjRtStreamExecutorExecutable : public PjRtExecutable {
   }
 
   int64 SizeOfGeneratedCodeInBytes() const override {
-    int64 size = 0;
+    int64_t size = 0;
     for (auto& executable : executables_) {
       size += executable->executable()->SizeOfGeneratedCodeInBytes();
     }
@@ -720,6 +743,8 @@ class PjRtStreamExecutorExecutable : public PjRtExecutable {
 
  private:
   friend class PjRtStreamExecutorClient;
+  friend class PjRtTpuClient;
+  friend class InternalPjRtTpuClient;
   // Initializes information about which arguments to which executables must be
   // donated due to aliases that were specified by the computation.
   Status SetUpDonation(bool tuple_inputs);

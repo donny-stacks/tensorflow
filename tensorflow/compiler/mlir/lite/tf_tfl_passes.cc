@@ -30,7 +30,6 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/utils/fake_quant_utils.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops_a_m.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_saved_model.h"
-#include "tensorflow/compiler/mlir/tensorflow/transforms/decode_constant.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/tf_saved_model_passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/tf_mlir_translate.h"
@@ -92,6 +91,8 @@ void AddTFToTFLConversionPasses(const toco::ModelFlags& model_flags,
     pass_manager->addPass(mlir::TF::CreateTFShapeInferencePass());
   }
 
+  // TODO(b/149099381): Remove after handling WhileRegion in favor of later
+  // instance.
   if (session.hasValue()) {
     pass_manager->addPass(
         mlir::tf_saved_model::CreateFreezeVariablesPass(session.getValue()));
@@ -118,6 +119,12 @@ void AddTFToTFLConversionPasses(const toco::ModelFlags& model_flags,
   // during which resources dont get frozen in the python layer.
   pass_manager->addNestedPass<mlir::FuncOp>(
       mlir::TFDevice::CreateDecomposeResourceOpsPass());
+
+  // Try freezing again read only vars post resource decomposition.
+  if (session.hasValue()) {
+    pass_manager->addPass(
+        mlir::tf_saved_model::CreateFreezeVariablesPass(session.getValue()));
+  }
 
   // Note:
   // We need to fuse composite ops before LowerStaticTensorList pass.
@@ -162,9 +169,6 @@ void AddTFToTFLConversionPasses(const toco::ModelFlags& model_flags,
   // function inliner interface.
   pass_manager->addPass(mlir::createInlinerPass());
 
-  // TODO(jpienaar): Revise post dialect constants.
-  pass_manager->addNestedPass<mlir::FuncOp>(
-      mlir::TF::CreateDecodeConstantPass());
   // Canonicalization includes const folding, which is utilized here to optimize
   // away ops that can't get constant folded after PrepareTF pass. For example,
   // tf.Conv2D is split into tf.Transpose and tfl.Conv2D.
@@ -268,6 +272,9 @@ void AddTFToTFLConversionPasses(const toco::ModelFlags& model_flags,
     pass_manager->addPass(
         mlir::TFL::CreateInsertCallOnceOpFromSessionInitializerPass());
   }
+  if (pass_config.unfold_large_splat_constant) {
+    pass_manager->addPass(mlir::TFL::CreateUnfoldLargeSplatConstantPass());
+  }
 }
 
 void AddTFToTFLConversionPasses(const mlir::TFL::PassConfig& pass_config,
@@ -317,7 +324,6 @@ void CreateTFLStandardPipeline(OpPassManager& pm,
   pm.addPass(mlir::createInlinerPass());
 
   // Canonicalize, CSE etc.
-  pm.addPass(mlir::TF::CreateDecodeConstantPass());
   pm.addNestedPass<mlir::FuncOp>(mlir::createCanonicalizerPass());
   pm.addNestedPass<mlir::FuncOp>(mlir::createCSEPass());
   // DCE for private symbols.

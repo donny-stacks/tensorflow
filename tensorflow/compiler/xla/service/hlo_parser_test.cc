@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "absl/memory/memory.h"
 #include "absl/strings/match.h"
@@ -1649,10 +1650,10 @@ ENTRY CRS {
 
 )"
 },
-// all-reduce-scatter
+// reduce-scatter
 {
-"AllReduceScatter",
-R"(HloModule ARS
+"ReduceScatter",
+R"(HloModule RS
 
 add {
   lhs = f32[] parameter(0)
@@ -1662,7 +1663,7 @@ add {
 
 ENTRY CRS {
   input = f32[8]{0} parameter(0)
-  ROOT ars = f32[4]{0} all-reduce-scatter(input), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+  ROOT ars = f32[4]{0} reduce-scatter(input), replica_groups={{0,1}}, dimensions={0}, to_apply=add
 }
 
 )"
@@ -1762,6 +1763,61 @@ ENTRY CollectivePermuteInPlaceUpdate {
 )",
 /*replica_count=*/4
 },
+// collective-permute with in-place updates with multiple targets per source
+{
+"CollectivePermuteInPlaceUpdateMultipleReadWrite",
+R"(HloModule CollectivePermuteInPlaceUpdateMultipleReadWrite
+
+ENTRY CollectivePermuteInPlaceUpdate {
+  constant.3 = s32[] constant(2)
+  constant.1 = s32[] constant(0)
+  output_offset.3 = (s32[], s32[], s32[]) tuple(constant.3, constant.1, constant.1)
+  constant.4 = s32[] constant(3)
+  output_offset.4 = (s32[], s32[], s32[]) tuple(constant.4, constant.1, constant.1)
+  input = f32[8,8,128]{2,1,0} parameter(0)
+  constant = f32[] constant(1)
+  output = f32[8,8,128]{2,1,0} broadcast(constant), dimensions={}
+  input_offset.1 = (s32[], s32[], s32[]) tuple(constant.1, constant.1, constant.1)
+  constant.2 = s32[] constant(1)
+  input_offset.2 = (s32[], s32[], s32[]) tuple(constant.2, constant.1, constant.1)
+  input_offset = ((s32[], s32[], s32[]), (s32[], s32[], s32[])) tuple(input_offset.1, input_offset.2)
+  output_offset = ((s32[], s32[], s32[]), (s32[], s32[], s32[])) tuple(input_offset.1, input_offset.2)
+  ROOT root = f32[8,8,128]{2,1,0} collective-permute(input, output, input_offset, output_offset), source_target_pairs={{0,1},{1,2},{2,3},{0,3},{2,1},{3,2}}, slice_sizes={{1,8,128},{1,8,128}}
+}
+
+)",
+/*replica_count=*/4
+},
+{
+"CollectivePermuteInPlaceUpdateTupleMultipleReadWrite",
+R"(HloModule hlo_runner_test_0.1
+
+ENTRY hlo_runner_test_0.1 {
+  replica_id = u32[] replica-id()
+  broadcast.0 = u32[2,8,128]{2,1,0:T(2,128)} broadcast(replica_id), dimensions={}
+  tuple.input = (u32[2,8,128]{2,1,0:T(2,128)}, u32[2,8,128]{2,1,0:T(2,128)}) tuple(broadcast.0, broadcast.0)
+  constant.1 = u32[] constant(1000)
+  broadcast.1 = u32[2,8,128]{2,1,0:T(2,128)} broadcast(constant.1), dimensions={}
+  broadcast.2 = u32[4,8,128]{2,1,0:T(2,128)} broadcast(constant.1), dimensions={}
+  tuple.output = (u32[2,8,128]{2,1,0:T(2,128)}, u32[4,8,128]{2,1,0:T(2,128)}) tuple(broadcast.1, broadcast.2)
+  constant.2 = s32[] constant(0)
+  tuple.2 = (s32[], s32[], s32[]) tuple(constant.2, constant.2, constant.2)
+  constant.3 = s32[] constant(1)
+  tuple.3 = (s32[], s32[], s32[]) tuple(constant.3, constant.2, constant.2)
+  tuple.4 = ((s32[], s32[], s32[]), (s32[], s32[], s32[])) tuple(tuple.2, tuple.3)
+  tuple.7 = ((s32[], s32[], s32[]), (s32[], s32[], s32[])) tuple(tuple.2, tuple.2)
+  tuple.8 = (((s32[], s32[], s32[]), (s32[], s32[], s32[])), ((s32[], s32[], s32[]), (s32[], s32[], s32[]))) tuple(tuple.4, tuple.7)
+  constant.4 = s32[] constant(2)
+  tuple.5 = (s32[], s32[], s32[]) tuple(constant.4, constant.2, constant.2)
+  tuple.6 = ((s32[], s32[], s32[]), (s32[], s32[], s32[])) tuple(tuple.2, tuple.5)
+  tuple.9 = (((s32[], s32[], s32[]), (s32[], s32[], s32[])), ((s32[], s32[], s32[]), (s32[], s32[], s32[]))) tuple(tuple.4, tuple.6)
+  ROOT collective-permute.53 = (u32[2,8,128]{2,1,0:T(2,128)}, u32[4,8,128]{2,1,0:T(2,128)}) collective-permute(tuple.input, tuple.output, tuple.8, tuple.9), source_target_pairs={{0,1},{1,2},{2,3},{3,0},{0,3},{3,2},{2,1},{1,0}}, slice_sizes={{1,8,128},{1,8,128},{2,8,128},{2,8,128}}
+}
+
+)",
+/*replica_count=*/4
+},
+
 // collective-permute tuple with in-place updates
 {
 "CollectivePermuteTupleInPlaceUpdate",
@@ -2369,6 +2425,19 @@ TEST_F(HloParserTest, NegativeNan) {
 
 ENTRY %NegativeNan () -> bf16[2] {
   ROOT %constant = bf16[2]{0} constant({-nan, -nan})
+}
+
+)";
+  auto result = ParseAndReturnUnverifiedModule(original);
+  EXPECT_EQ(Status::OK(), result.status());
+  EXPECT_EQ(result.ValueOrDie()->ToString(HloPrintOptions()), original);
+}
+
+TEST_F(HloParserTest, NanPayload) {
+  const string original = R"(HloModule NanPayload_module
+
+ENTRY %NanPayload () -> bf16[2] {
+  ROOT %constant = bf16[2]{0} constant({-nan(0x7f), -nan(0x3f)})
 }
 
 )";

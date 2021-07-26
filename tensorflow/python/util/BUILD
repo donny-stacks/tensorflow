@@ -458,7 +458,6 @@ py_library(
         "//tensorflow/python:global_test_configuration",
         ":tf_decorator",
         ":tf_export",
-        "@org_python_pypi_backports_weakref",
         "@com_google_protobuf//:protobuf_python",
         "//third_party/py/numpy",
         "@six_archive//:six",
@@ -466,6 +465,29 @@ py_library(
         "//tensorflow/python/util/protobuf",
         "//tensorflow/tools/docs:doc_controls",
         "//tensorflow/tools/compatibility:all_renames_v2",
+    ],
+)
+
+py_strict_library(
+    name = "traceback_utils",
+    srcs = ["traceback_utils.py"],
+    compatible_with = get_compatible_with_portable(),
+    srcs_version = "PY3",
+    visibility = ["//tensorflow:__subpackages__"],
+    deps = [
+        ":tf_decorator",
+    ],
+)
+
+tf_py_test(
+    name = "traceback_utils_test",
+    size = "small",
+    srcs = ["traceback_utils_test.py"],
+    python_version = "PY3",
+    deps = [
+        "//tensorflow/python:array_ops",
+        "//tensorflow/python:variables",
+        "//tensorflow/python/eager:def_function",
     ],
 )
 

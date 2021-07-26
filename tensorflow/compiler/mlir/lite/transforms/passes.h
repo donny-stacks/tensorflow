@@ -66,6 +66,11 @@ std::unique_ptr<OperationPass<FuncOp>> CreatePrepareQuantizePass(
 std::unique_ptr<OperationPass<FuncOp>> CreatePostQuantizePass(
     bool emit_quant_adaptor_ops);
 
+// Creates an instance of the TensorFlow Lite pass that decomposes hybrid
+// quantization patterns to the same dense operation with tfl dequantization
+// and quantization patterns.
+std::unique_ptr<OperationPass<FuncOp>> CreateDecomposeHybridQuantizationPass();
+
 // Creates an instance of the TensorFlow Lite optimize op order pass.
 std::unique_ptr<OperationPass<FuncOp>> CreateOptimizeOpOrderPass();
 
@@ -136,6 +141,10 @@ std::unique_ptr<OperationPass<ModuleOp>> CreateLegalizeHashTablesPass();
 // Creates get arithmetic count pass, which will calculate the arithmetic count
 // for each ops.
 std::unique_ptr<OperationPass<FuncOp>> CreateGetArithmeticCountPass();
+
+// Creates unfold large constant pass, which will replace large splat constant
+// tensors with fill op.
+std::unique_ptr<OperationPass<ModuleOp>> CreateUnfoldLargeSplatConstantPass();
 }  // namespace TFL
 
 }  // namespace mlir

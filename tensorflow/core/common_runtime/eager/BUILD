@@ -4,6 +4,7 @@ load(
     "//tensorflow:tensorflow.bzl",
     "tf_cc_test",
     "tf_cc_test_mkl",
+    "tf_copts",
     "tf_cuda_library",
     "tf_mkl_kernel_library",
 )
@@ -178,16 +179,20 @@ tf_cuda_library(
     deps = [
         ":context",
         ":eager_executor",
+        "//tensorflow/c/eager:abstract_tensor_handle",
         "//tensorflow/c/eager:immediate_execution_context",
         "//tensorflow/c/eager:immediate_execution_distributed_manager",
         "//tensorflow/core/distributed_runtime:rendezvous_mgr_interface",
         "//tensorflow/core/distributed_runtime:worker_env",
+        "//tensorflow/cc:ops",
     ] + select({
         "//tensorflow:android": [
             "//tensorflow/core:portable_tensorflow_lib_lite",
         ],
         "//conditions:default": [
             "//tensorflow/core/distributed_runtime/coordination:coordination_service",
+            "//tensorflow/core/distributed_runtime/coordination:coordination_service_agent",
+            "//tensorflow/core/distributed_runtime/coordination:coordination_service_agent_impl",
             "//tensorflow/core/distributed_runtime/coordination:coordination_service_impl",
             "//tensorflow/core:core_cpu_lib",
             "//tensorflow/core:framework",
@@ -487,7 +492,8 @@ cc_library(
     hdrs = [
         "execute.h",
         "execute_node.h",
-    ],
+    ] + if_mkl(["//tensorflow/core/graph:mkl_graph_util_header"]),
+    copts = if_mkl(["-DINTEL_MKL"]),
     deps = [
         ":context",
         ":copy_to_device_node",
@@ -610,6 +616,7 @@ cc_library(
         "execute.h",
         "execute_node.h",
     ],
+    copts = tf_copts(),
     deps = [
         ":context",
         ":copy_to_device_node",

@@ -74,9 +74,7 @@ const std::map<string, string>& GetKnownBrokenTests() {
           {R"(^\/where.*1,2,3,1)", "134692786"},
 
           {R"(^\/div.*dtype=tf\.int64)", "119126484"},
-          {R"(^\/mul.*dtype=tf\.int64)", "119126484"},
           {R"(^\/floor_div.*dtype=tf\.int64)", "119126484"},
-          {R"(^\/squared_difference.*dtype=tf\.int64)", "119126484"},
       });
   return *kBrokenTests;
 }
@@ -137,7 +135,7 @@ class ArchiveEnvironment : public ::testing::Environment {
   // Delete all temporary directories on teardown.
   void TearDown() override {
     for (const auto& dir : temporary_directories_) {
-      tensorflow::int64 undeleted_dirs, undeleted_files;
+      int64_t undeleted_dirs, undeleted_files;
       TF_CHECK_OK(
           env->DeleteRecursively(dir, &undeleted_dirs, &undeleted_files));
     }

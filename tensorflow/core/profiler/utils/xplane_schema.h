@@ -200,6 +200,8 @@ enum StatType {
   kBytesAccessed,
   kSelectedGroupIds,
   kSourceInfo,
+  kModelName,
+  kModelVersion,
   // Performance counter related.
   kRawValue,
   kScaledValue,
@@ -226,7 +228,7 @@ enum StatType {
   kLastStatType = kOccupancySuggestedBlockSize,
 };
 
-inline std::string GpuPlaneName(int32 device_ordinal) {
+inline std::string GpuPlaneName(int32_t device_ordinal) {
   return absl::StrCat(kGpuPlanePrefix, device_ordinal);
 }
 

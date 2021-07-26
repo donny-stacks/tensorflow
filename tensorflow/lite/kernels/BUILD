@@ -1,5 +1,4 @@
 load("//tensorflow/lite:build_def.bzl", "tflite_combine_cc_tests", "tflite_copts")
-load("//tensorflow/lite/micro:build_def.bzl", "micro_copts")
 load("//tensorflow/lite:special_rules.bzl", "tflite_portable_test_suite_combined")
 load("//tensorflow:tensorflow.bzl", "tf_opts_nortti_if_android")
 load("//tensorflow:tensorflow.bzl", "get_compatible_with_portable", "pybind_extension")
@@ -463,7 +462,6 @@ cc_library(
     ],
     compatible_with = get_compatible_with_portable(),
     copts = tflite_copts(),
-    deps = ["//tensorflow/lite/micro:debug_log"],
 )
 
 cc_library(
@@ -475,7 +473,7 @@ cc_library(
         "kernel_util.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    copts = tflite_copts() + micro_copts(),
+    copts = tflite_copts(),
     deps = [
         "//tensorflow/lite/c:common",
         "//tensorflow/lite/kernels/internal:cppmath",
@@ -548,12 +546,14 @@ BUILTIN_KERNEL_SRCS = [
     "add.cc",
     "add_n.cc",
     "arg_min_max.cc",
+    "assign_variable.cc",
     "audio_spectrogram.cc",
     "basic_rnn.cc",
     "batch_matmul.cc",
     "batch_to_space_nd.cc",
     "bidirectional_sequence_lstm.cc",
     "bidirectional_sequence_rnn.cc",
+    "broadcast_args.cc",
     "broadcast_to.cc",
     "call_once.cc",
     "cast.cc",
@@ -612,6 +612,7 @@ BUILTIN_KERNEL_SRCS = [
     "quantize.cc",
     "range.cc",
     "rank.cc",
+    "read_variable.cc",
     "reduce.cc",
     "reshape.cc",
     "resize_bilinear.cc",
@@ -643,6 +644,7 @@ BUILTIN_KERNEL_SRCS = [
     "unidirectional_sequence_rnn.cc",
     "unique.cc",
     "unpack.cc",
+    "var_handle.cc",
     "where.cc",
     "while.cc",
     "zeros_like.cc",
@@ -713,9 +715,7 @@ cc_library(
         "assign_variable.cc",
         "read_variable.cc",
         "var_handle.cc",
-        "variable_ops.cc",
     ],
-    hdrs = ["variable_ops.h"],
     copts = tflite_copts(),
     deps = [
         ":kernel_util",
@@ -734,9 +734,11 @@ cc_test(
         "variable_ops_test.cc",
     ],
     deps = [
+        ":builtin_ops",
         ":test_main",
         ":variable_op_kernels",  # buildcleaner: keep
         "//tensorflow/lite:framework",
+        "//tensorflow/lite/c:common",
         "//tensorflow/lite/kernels/internal:tensor",
         "@com_google_googletest//:gtest",
         "@flatbuffers",
@@ -748,12 +750,10 @@ pybind_extension(
     srcs = [
         "variable_ops_wrapper.cc",
     ],
-    hdrs = ["variable_ops.h"],
     additional_exported_symbols = ["VariableOpsRegisterer"],
     link_in_framework = True,
     module_name = "pywrap_variable_ops",
     deps = [
-        ":variable_op_kernels",
         "//tensorflow/lite:framework",
         "//tensorflow/lite:mutable_op_resolver",
         "//third_party/python_runtime:headers",
@@ -785,6 +785,7 @@ cc_library(
         "pooling3d.cc",
         "random_standard_normal.cc",
         "random_uniform.cc",
+        "roll.cc",
         "sign.cc",
         "unidirectional_sequence_gru.cc",
     ],
@@ -1083,6 +1084,19 @@ cc_test(
         "//tensorflow/lite/schema:schema_fbs",
         "@com_google_googletest//:gtest",
         "@flatbuffers",
+    ],
+)
+
+cc_test(
+    name = "broadcast_args_test",
+    size = "small",
+    srcs = ["broadcast_args_test.cc"],
+    deps = [
+        ":builtin_ops",
+        ":test_main",
+        ":test_util",
+        "//tensorflow/lite:framework",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -1504,6 +1518,21 @@ cc_test(
         ":custom_ops",
         ":test_main",
         ":test_util",
+        "//tensorflow/lite/schema:schema_fbs",
+        "//tensorflow/lite/testing:util",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "roll_test",
+    size = "small",
+    srcs = ["roll_test.cc"],
+    deps = [
+        ":custom_ops",
+        ":test_main",
+        ":test_util",
+        "//tensorflow/lite/kernels/internal:types",
         "//tensorflow/lite/schema:schema_fbs",
         "//tensorflow/lite/testing:util",
         "@com_google_googletest//:gtest",
@@ -1975,7 +2004,9 @@ cc_test(
     name = "strided_slice_test",
     size = "small",
     srcs = ["strided_slice_test.cc"],
-    tags = ["tflite_nnapi"],
+    tags = [
+        "tflite_nnapi",
+    ],
     deps = [
         ":test_main",
         ":test_util",

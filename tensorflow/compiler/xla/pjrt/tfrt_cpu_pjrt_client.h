@@ -135,6 +135,19 @@ class TfrtCpuClient final : public PjRtClient {
   StatusOr<absl::optional<std::string>> ExecutableFingerprint(
       const PjRtExecutable& executable) const override;
 
+  StatusOr<std::string> SerializeExecutable(
+      const PjRtExecutable& executable) const override {
+    return Unimplemented("SerializeExecutable not implemented on %s",
+                         platform_name());
+  }
+
+  StatusOr<std::unique_ptr<PjRtExecutable>> DeserializeExecutable(
+      absl::string_view serialized, std::unique_ptr<HloModule> hlo_module,
+      CompileOptions options) override {
+    return Unimplemented("DeserializeExecutable not implemented on %s",
+                         platform_name());
+  }
+
   StatusOr<std::unique_ptr<PjRtBuffer>> CreateUninitializedBuffer(
       const Shape& shape, PjRtDevice* device) override;
 
@@ -414,7 +427,7 @@ class TfrtCpuBuffer final : public PjRtBuffer {
 
   StatusOr<size_t> GetOnDeviceSizeInBytes() const override;
 
-  Status CopyRawToHost(void* dst, int64 offset, int64 transfer_size,
+  Status CopyRawToHost(void* dst, int64_t offset, int64_t transfer_size,
                        std::function<void(Status)> on_ready) override {
     return Unimplemented("CopyRawToHost not implemented");
   }
