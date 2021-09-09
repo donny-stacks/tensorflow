@@ -31,7 +31,6 @@
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Types.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "tfrt/basic_kernels/opdefs/types.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"  // from @llvm-project
@@ -44,6 +43,7 @@
 #include "tfrt/gpu/pass/pass.h"  // from @tf_runtime
 #include "tfrt/gpu/wrapper/cublas_wrapper.h"  // from @tf_runtime
 #include "tfrt/basic_kernels/opdefs/basic_kernels.h"  // from @tf_runtime
+#include "tfrt/basic_kernels/opdefs/types.h"  // from @tf_runtime
 
 namespace tensorflow {
 namespace {
@@ -273,8 +273,8 @@ FailureOr<Value> GemmOpConversionRewrite(
         xla::LayoutUtil::Minor(output_shape.layout(), row_dim);
     return MatrixDescriptor{
         replaced_value, static_cast<bool>(transpose ^ layout_mismatch),
-        shape.dimensions(row_dim + static_cast<int64>(is_row_major)),
-        shape.dimensions(row_dim + static_cast<int64>(!is_row_major))};
+        shape.dimensions(row_dim + static_cast<int64_t>(is_row_major)),
+        shape.dimensions(row_dim + static_cast<int64_t>(!is_row_major))};
   };
 
   MatrixDescriptor lhs_matrix = make_descriptor(
@@ -341,19 +341,6 @@ struct GemmRewritePattern : tfrt::gpu::GpuAsyncOpConversionPattern<GemmOpType> {
 };
 
 }  // namespace
-
-mlir::LogicalResult GemmOpConversionRewrite(mlir::lmhlo_gpu::GEMMOp srcOp,
-                                            mlir::BlockAndValueMapping& mapping,
-                                            mlir::OpBuilder& builder) {
-  auto chain_type = builder.getType<tfrt::compiler::ChainType>();
-  auto chain =
-      builder.create<tfrt::compiler::NewChainOp>(srcOp->getLoc(), chain_type);
-  auto enclosing_func =
-      llvm::cast<mlir::FuncOp>(builder.getBlock()->getParentOp());
-  // The first argument is the GpuStream.
-  auto stream = enclosing_func.getArgument(0);
-  return GemmOpConversionRewrite(srcOp, chain, stream, mapping, builder);
-}
 
 void populateGemmConversionPattern(RewritePatternSet& patterns) {
   patterns.add<GemmRewritePattern<lmhlo_gpu::GEMMOp>,

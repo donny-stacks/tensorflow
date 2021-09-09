@@ -175,6 +175,11 @@ class TFL_2DTensorOf<list<Type> allowedRuntimeTypes,
                      list<Type> allowedOpTypes = [AnyType]> :
   2DTensorOf<allowedOpTypes>, TFL_RuntimeType<TensorOf<allowedRuntimeTypes>>;
 
+class TFL_1DTensorOfOrNone<list<Type> allowedRuntimeTypes, string description = "",
+                         list<Type> allowedOpTypes = [AnyType]> :
+  AnyTypeOf<[TensorOf<allowedOpTypes>, NoneType], description>,
+  TFL_RuntimeType<AnyTypeOf<[TFL_1DTensorOf<allowedRuntimeTypes>, NoneType]>>;
+
 // This is used to represent the type of "ref tensors" or tensors that are
 // used as variables to track state.
 def TFL_StatefulTensor : TypeAlias<AnyTensor, "stateful tensor">;
@@ -981,7 +986,7 @@ def TFL_DepthwiseConv2DOp :
   let arguments = (
     ins TFL_TensorOf<[F32, QI8, QUI8, QI16]>:$input,
     TFL_TensorOf<[F32, QI8, QUI8]>:$filter,
-    TFL_TensorOfOrNone<[F32, I32, I64]>:$bias,
+    TFL_1DTensorOfOrNone<[F32, I32, I64]>:$bias,
     I32Attr:$dilation_h_factor,
     I32Attr:$dilation_w_factor,
     TFL_AFAttr:$fused_activation_function,
@@ -1125,6 +1130,8 @@ def TFL_GatherOp : TFL_Op<"gather", [
   );
 
   let hasOptions = 1;
+
+  let verifier = [{ return Verify(*this); }];
 }
 
 def TFL_GatherNdOp : TFL_Op<"gather_nd", [
@@ -1660,6 +1667,7 @@ shape(squeeze(t, [2, 4])) ==> [1, 2, 3, 1]
     AnyTensor:$output
   );
 
+  let hasFolder = 1;
   let hasOptions = 1;
 
   let customOption = "SqueezeOptions";
@@ -1667,6 +1675,7 @@ shape(squeeze(t, [2, 4])) ==> [1, 2, 3, 1]
 
 def TFL_FillOp: TFL_Op<"fill", [
     NoSideEffect,
+    SameOperandsAndResultsScale,
     PredOpTrait<"input and result must have same element type",
       TFL_TCresVTEtIsSameAsOp<0, 1>>]> {
   let summary = "Fill the tensor with given value.";
@@ -3188,6 +3197,11 @@ def TFL_TransposeOp : TFL_Op<"transpose", [
     OpBuilder<(ins "Value":$input, "Value":$perm),
     [{ BuildTransposeOp(&$_builder, $_state, input, perm); }]>
   ];
+
+  let extraClassDeclaration = [{
+    // Quantized axes are verified in the Verify function.
+    bool RequiredSameQuantizedAxes() { return false; }
+  }];
 }
 
 def TFL_UnpackOp : TFL_Op<"unpack", [
@@ -3567,10 +3581,10 @@ def TFL_CastOp : TFL_Op<"cast", [
   }];
 
   let arguments = (ins
-    TFL_TensorOf<[F32, I1, I16, I32, I64, TFL_Quint8, UI8, Complex<F<32>>]>:$input
+    TFL_TensorOf<[F32, I1, I16, I32, UI32, I64, TFL_Quint8, UI8, Complex<F<32>>]>:$input
   );
 
-  let results = (outs TFL_TensorOf<[F32, I1, I16, I32, I64, TFL_Quint8, UI8, Complex<F<32>>]>:$output);
+  let results = (outs TFL_TensorOf<[F32, I1, I16, I32, UI32, I64, TFL_Quint8, UI8, Complex<F<32>>]>:$output);
 
   // TFLite's cast op does not utilize CastOptions, instead derives types
   // from the TfLiteTensors.

@@ -28,12 +28,10 @@ cc_library(
         ":quantization_util",
         "//tensorflow/lite:kernel_api",
         "//tensorflow/lite:minimal_logging",
-        "//tensorflow/lite:util",
         "//tensorflow/lite/c:common",
         "//tensorflow/lite/kernels/internal:compatibility",
         "//tensorflow/lite/kernels/internal:tensor",
-        "//tensorflow/lite/schema:schema_fbs",
-        "//tensorflow/lite/tools/optimize/sparsity:format_converter",
+        "//tensorflow/lite/kernels/internal/utils:sparsity_format_converter",
         "@XNNPACK//:xnnpack_for_tflite",
     ],
 )
@@ -58,12 +56,10 @@ cc_library(
         ":quantization_util",
         "//tensorflow/lite:kernel_api",
         "//tensorflow/lite:minimal_logging",
-        "//tensorflow/lite:util",
         "//tensorflow/lite/c:common",
         "//tensorflow/lite/kernels/internal:compatibility",
         "//tensorflow/lite/kernels/internal:tensor",
-        "//tensorflow/lite/schema:schema_fbs",
-        "//tensorflow/lite/tools/optimize/sparsity:format_converter",
+        "//tensorflow/lite/kernels/internal/utils:sparsity_format_converter",
         "@XNNPACK",
     ],
 )
@@ -255,10 +251,10 @@ cc_library(
 )
 
 cc_library(
-    name = "quantized_add_tester",
+    name = "quantized_binary_elementwise_tester",
     testonly = 1,
-    srcs = ["quantized_add_tester.cc"],
-    hdrs = ["quantized_add_tester.h"],
+    srcs = ["quantized_binary_elementwise_tester.cc"],
+    hdrs = ["quantized_binary_elementwise_tester.h"],
     deps = [
         "//tensorflow/lite:framework",
         "//tensorflow/lite:schema_fbs_version",
@@ -310,6 +306,40 @@ cc_library(
     testonly = 1,
     srcs = ["quantized_fully_connected_tester.cc"],
     hdrs = ["quantized_fully_connected_tester.h"],
+    deps = [
+        "//tensorflow/lite:framework",
+        "//tensorflow/lite:schema_fbs_version",
+        "//tensorflow/lite/c:common",
+        "//tensorflow/lite/kernels:builtin_ops",
+        "//tensorflow/lite/schema:schema_conversion_utils",
+        "//tensorflow/lite/schema:schema_fbs",
+        "@com_google_googletest//:gtest",
+        "@flatbuffers",
+    ],
+)
+
+cc_library(
+    name = "quantized_pad_tester",
+    testonly = 1,
+    srcs = ["quantized_pad_tester.cc"],
+    hdrs = ["quantized_pad_tester.h"],
+    deps = [
+        "//tensorflow/lite:framework",
+        "//tensorflow/lite:schema_fbs_version",
+        "//tensorflow/lite/c:common",
+        "//tensorflow/lite/kernels:builtin_ops",
+        "//tensorflow/lite/schema:schema_conversion_utils",
+        "//tensorflow/lite/schema:schema_fbs",
+        "@com_google_googletest//:gtest",
+        "@flatbuffers",
+    ],
+)
+
+cc_library(
+    name = "quantized_pool_2d_tester",
+    testonly = 1,
+    srcs = ["quantized_pool_2d_tester.cc"],
+    hdrs = ["quantized_pool_2d_tester.h"],
     deps = [
         "//tensorflow/lite:framework",
         "//tensorflow/lite:schema_fbs_version",
@@ -909,7 +939,7 @@ cc_test(
         "//conditions:default": [],
     }),
     deps = [
-        ":quantized_add_tester",
+        ":quantized_binary_elementwise_tester",
         ":test_main",
         ":xnnpack_delegate_test_mode",
         "@com_google_googletest//:gtest",
@@ -955,6 +985,66 @@ cc_test(
     }),
     deps = [
         ":quantized_fully_connected_tester",
+        ":test_main",
+        ":xnnpack_delegate_test_mode",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "signed_quantized_max_pool_2d_test",
+    srcs = ["signed_quantized_max_pool_2d_test.cc"],
+    linkopts = select({
+        "//tensorflow:emscripten": EMSCRIPTEN_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":quantized_pool_2d_tester",
+        ":test_main",
+        ":xnnpack_delegate_test_mode",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "signed_quantized_mul_test",
+    srcs = ["signed_quantized_mul_test.cc"],
+    linkopts = select({
+        "//tensorflow:emscripten": EMSCRIPTEN_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":quantized_binary_elementwise_tester",
+        ":test_main",
+        ":xnnpack_delegate_test_mode",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "signed_quantized_pad_test",
+    srcs = ["signed_quantized_pad_test.cc"],
+    linkopts = select({
+        "//tensorflow:emscripten": EMSCRIPTEN_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":quantized_pad_tester",
+        ":test_main",
+        ":xnnpack_delegate_test_mode",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "signed_quantized_sub_test",
+    srcs = ["signed_quantized_sub_test.cc"],
+    linkopts = select({
+        "//tensorflow:emscripten": EMSCRIPTEN_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":quantized_binary_elementwise_tester",
         ":test_main",
         ":xnnpack_delegate_test_mode",
         "@com_google_googletest//:gtest",
@@ -1044,7 +1134,7 @@ cc_test(
         "//conditions:default": [],
     }),
     deps = [
-        ":quantized_add_tester",
+        ":quantized_binary_elementwise_tester",
         ":test_main",
         ":xnnpack_delegate_test_mode",
         "@com_google_googletest//:gtest",
@@ -1090,6 +1180,66 @@ cc_test(
     }),
     deps = [
         ":quantized_fully_connected_tester",
+        ":test_main",
+        ":xnnpack_delegate_test_mode",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "unsigned_quantized_max_pool_2d_test",
+    srcs = ["unsigned_quantized_max_pool_2d_test.cc"],
+    linkopts = select({
+        "//tensorflow:emscripten": EMSCRIPTEN_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":quantized_pool_2d_tester",
+        ":test_main",
+        ":xnnpack_delegate_test_mode",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "unsigned_quantized_mul_test",
+    srcs = ["unsigned_quantized_mul_test.cc"],
+    linkopts = select({
+        "//tensorflow:emscripten": EMSCRIPTEN_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":quantized_binary_elementwise_tester",
+        ":test_main",
+        ":xnnpack_delegate_test_mode",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "unsigned_quantized_pad_test",
+    srcs = ["unsigned_quantized_pad_test.cc"],
+    linkopts = select({
+        "//tensorflow:emscripten": EMSCRIPTEN_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":quantized_pad_tester",
+        ":test_main",
+        ":xnnpack_delegate_test_mode",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "unsigned_quantized_sub_test",
+    srcs = ["unsigned_quantized_sub_test.cc"],
+    linkopts = select({
+        "//tensorflow:emscripten": EMSCRIPTEN_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":quantized_binary_elementwise_tester",
         ":test_main",
         ":xnnpack_delegate_test_mode",
         "@com_google_googletest//:gtest",

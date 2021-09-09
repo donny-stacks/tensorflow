@@ -31,16 +31,6 @@ limitations under the License.
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/Passes.h"
 #include "mlir/Transforms/RegionUtils.h"
-#include "tfrt/basic_kernels/opdefs/basic_kernels.h"
-#include "tfrt/basic_kernels/opdefs/tfrt_base.h"
-#include "tfrt/basic_kernels/opdefs/types.h"
-#include "tfrt/core_runtime/opdefs/attributes.h"
-#include "tfrt/core_runtime/opdefs/core_runtime.h"
-#include "tfrt/core_runtime/opdefs/types.h"
-#include "tfrt/cpu/jit/opdefs/cpurt_ops.h"
-#include "tfrt/distributed_runtime/opdefs/kernels.h"
-#include "tfrt/distributed_runtime/opdefs/types.h"
-#include "tfrt/test_kernels/opdefs/test_kernels.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
@@ -50,14 +40,15 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/analysis/side_effect_analysis.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_device.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
+#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops_n_z.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/bridge_logger.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/convert_tensor.h"
 #include "tensorflow/compiler/mlir/tfrt/analysis/cost_analysis.h"
 #include "tensorflow/compiler/mlir/tfrt/analysis/tensor_array_side_effect_analysis.h"
 #include "tensorflow/compiler/mlir/tfrt/jit/opdefs/tf_cpurt_ops.h"
-#include "tensorflow/compiler/mlir/tfrt/jit/tf_cpurt_clustering.h"
-#include "tensorflow/compiler/mlir/tfrt/jit/tf_cpurt_passes.h"
+#include "tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_clustering.h"
+#include "tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_passes.h"
 #include "tensorflow/compiler/mlir/tfrt/transforms/corert_converter.h"
 #include "tensorflow/compiler/mlir/tfrt/transforms/fallback_converter.h"
 #include "tensorflow/compiler/mlir/tfrt/transforms/passes.h"
@@ -66,7 +57,16 @@ limitations under the License.
 #include "tensorflow/core/platform/tstring.h"
 #include "tensorflow/core/runtime_fallback/opdefs/tfrt_fallback.h"
 #include "tensorflow/core/runtime_fallback/opdefs/tfrt_fallback_async.h"
+#include "tfrt/cpu/jit/opdefs/cpurt_ops.h"  // from @tf_runtime
 #include "tfrt/basic_kernels/opdefs/basic_kernels.h"  // from @tf_runtime
+#include "tfrt/basic_kernels/opdefs/tfrt_base.h"  // from @tf_runtime
+#include "tfrt/basic_kernels/opdefs/types.h"  // from @tf_runtime
+#include "tfrt/core_runtime/opdefs/attributes.h"  // from @tf_runtime
+#include "tfrt/core_runtime/opdefs/core_runtime.h"  // from @tf_runtime
+#include "tfrt/core_runtime/opdefs/types.h"  // from @tf_runtime
+#include "tfrt/distributed_runtime/opdefs/kernels.h"  // from @tf_runtime
+#include "tfrt/distributed_runtime/opdefs/types.h"  // from @tf_runtime
+#include "tfrt/test_kernels/opdefs/test_kernels.h"  // from @tf_runtime
 
 namespace tensorflow {
 namespace {
@@ -153,6 +153,11 @@ class FallbackExecuteOpConversion : public mlir::ConversionPattern {
     mlir::StringAttr op_name =
         rewriter.getStringAttr(op->getName().getStringRef());
 
+    // Ops with _tpu_replicate attribute are TPU ops.
+    bool is_tpu_op = op->hasAttr("_tpu_replicate") ||
+                     llvm::isa<mlir::TF::TPUReplicatedInputOp,
+                               mlir::TF::TPUReplicatedOutputOp>(op);
+
     // Currently the fallback executeop does not support GPU device. For GPU
     // device, we still lower it to corert executeop where more devices are
     // supported.
@@ -161,7 +166,15 @@ class FallbackExecuteOpConversion : public mlir::ConversionPattern {
     // remove the conversion to corert.
     if (parsed_device_name->device_type == DEVICE_GPU ||
         (parsed_device_name->device_type == kDeviceTypeTpu &&
-         !tpu_lower_to_fallback_)) {
+         !tpu_lower_to_fallback_) ||
+        // Convert ops running on TPU to CoreRT dialect to prevent the creation
+        // of tfrt_fallback_async.createop for them.
+        // These ops will be encountered here only when using fallback to run
+        // TPU models, in which case, these ops are assumed to be in a function
+        // called by a TPUPartitionedCall op and will be compiled in
+        // TPUPartitionedCall op via FunctionLibraryRuntime and not be processed
+        // by BEFExecutor.
+        is_tpu_op) {
       return ConvertToCoreRTExecuteOp(
           op, operands, parsed_device_name->op_handler_name, op_attrs,
           op_func_attrs, op_name, rewriter);
@@ -189,7 +202,7 @@ class FallbackExecuteOpConversion : public mlir::ConversionPattern {
     return !llvm::isa<
         mlir::TF::_TfrtSetResourceOp, mlir::TF::_TfrtGetResourceOp,
         mlir::TF::_TPUCompileMlirOp, mlir::TF::TPUCompileSucceededAssertOp,
-        mlir::TF::TPUExecuteOp,
+        mlir::TF::TPUExecuteOp, mlir::TF::TPUCompileMlirAndExecuteOp,
         // Specifically handle control flow ops.
         mlir::TF::CaseOp, mlir::TF::IfOp, mlir::TF::WhileOp,
         mlir::TF::StatefulPartitionedCallOp, mlir::TF::PartitionedCallOp>(op);
@@ -899,7 +912,8 @@ class TFRTCallOpConversion : public mlir::OpConversionPattern<CallOp> {
     }
 
     auto new_op = rewriter.create<tfrt::compiler::CallOp>(
-        op.getLoc(), result_types, callee.getRootReference(), new_operands);
+        op.getLoc(), result_types, callee.getRootReference().getValue(),
+        new_operands);
     rewriter.replaceOp(op, new_op.getResults().drop_front());
 
     if (!mlir::MemoryEffectOpInterface::hasNoEffect(op)) {
@@ -1563,7 +1577,7 @@ class TfToTfrtConversionPass
   void getDependentDialects(mlir::DialectRegistry &registry) const override {
     getDependentConversionDialects(registry);
 
-    if (target_tpu_) RegisterTPUDialects(&registry);
+    if (target_tpurt_) RegisterTPUDialects(&registry);
   }
 
   llvm::StringRef getArgument() const final { return "tf-to-tfrt"; }
@@ -1575,9 +1589,10 @@ class TfToTfrtConversionPass
  public:
   TfToTfrtConversionPass() = default;
   explicit TfToTfrtConversionPass(const TfrtPipelineOptions &options) {
-    target_tpu_ = options.target_tpu;
+    target_tpurt_ = options.target_tpurt;
     enable_native_ops_ = options.enable_native_ops;
     tpu_use_core_selector_ = options.tpu_use_core_selector;
+    tpu_use_bundled_transfer_ = options.tpu_use_bundled_transfer;
     tpu_lower_to_fallback_ = options.tpu_lower_to_fallback;
     tpu_transfer_result_to_host_ = options.tpu_transfer_result_to_host;
     cost_threshold_ = options.cost_threshold;
@@ -1600,11 +1615,13 @@ class TfToTfrtConversionPass
     CoreRTConverter corert_converter(&context, &side_effect_analysis);
     tfrt_compiler::CostAnalysis cost_analysis(func);
 
-    if (target_tpu_)
-      AddTPUTargetDialectAndPatterns(&target, &patterns, &context,
-                                     &corert_converter, tpu_use_core_selector_,
-                                     tpu_lower_to_fallback_,
-                                     tpu_transfer_result_to_host_);
+    if (target_tpurt_)
+      AddTPUTargetDialectAndPatterns(
+          &target, &patterns, &context, &corert_converter,
+          TfrtTpuExecuteOpConversionOptions{tpu_use_core_selector_,
+                                            tpu_use_bundled_transfer_,
+                                            tpu_transfer_result_to_host_},
+          tpu_lower_to_fallback_);
 
     mlir::TypeConverter *func_type_converter;
     if (func_use_fallback_tensor_) {
@@ -1777,9 +1794,9 @@ class TfToTfrtConversionPass
     llvm_unreachable("invalid fallback op type");
   }
 
-  Option<bool> target_tpu_{*this, "target-tpu",
-                           llvm::cl::desc("Target TPU programs if true."),
-                           llvm::cl::init(false)};
+  Option<bool> target_tpurt_{*this, "target-tpurt",
+                             llvm::cl::desc("Target TPURT dialect if true."),
+                             llvm::cl::init(false)};
 
   Option<bool> enable_native_ops_{
       *this, "enable-native-ops",
@@ -1792,6 +1809,12 @@ class TfToTfrtConversionPass
       *this, "tpu-use-core-selector",
       llvm::cl::desc("If true, use ServingCoreSelector to pick TPU core. "
                      "Otherwise, use the assigned core."),
+      llvm::cl::init(true)};
+
+  Option<bool> tpu_use_bundled_transfer_{
+      *this, "tpu-use-bundled-transfer",
+      llvm::cl::desc("If true, use BundledTransferToTpuOp to transfer "
+                     "variables and input tensors to TPU."),
       llvm::cl::init(true)};
 
   Option<bool> tpu_lower_to_fallback_{
@@ -2008,8 +2031,10 @@ LogicalResult OutlineCpuRtClustersPass::OutlineClusterOp(
   // Replace device cluster with a cpurt.call operation.
   auto module_name = *compiled_module.module.sym_name();
   auto func_name = compiled_func.sym_name();
-  auto func_flat_ref = builder.getSymbolRefAttr(func_name);
-  auto func_ref = builder.getSymbolRefAttr(module_name, {func_flat_ref});
+  auto func_flat_ref =
+      mlir::SymbolRefAttr::get(builder.getContext(), func_name);
+  auto func_ref = mlir::SymbolRefAttr::get(builder.getContext(), module_name,
+                                           {func_flat_ref});
 
   auto cluster_func_op = builder.create<tfrt::cpu::jit::CallOp>(
       loc, cluster.getResultTypes(), func_ref,
@@ -2094,6 +2119,11 @@ void CreateTFExecutorToTFPipeline(mlir::OpPassManager &pm,
   // Merge non-side-effecting tf.If ops if their operands are the same.
   pm.addPass(tfrt_compiler::CreateMergeTfIfOpsPass());
 
+  // Deduplicate functions invoked by tf.BatchFunction with the same
+  // shared_name
+  pm.addPass(
+      tfrt_compiler::CreateDeduplicateFunctionsInovkedByBatchFunctionPass());
+
   // Apply standard optimization after optimizing control flow ops.
   pm.addPass(mlir::createInlinerPass());
   pm.addNestedPass<mlir::FuncOp>(mlir::createCSEPass());
@@ -2126,7 +2156,7 @@ void CreateTFExecutorToTFPipeline(mlir::OpPassManager &pm,
 
   // Decompose resource ops as resource variables will be converted to tensors
   // directly. Only do use for non-TPU programs.
-  if (options.decompose_resource_ops && !options.target_tpu)
+  if (options.decompose_resource_ops && !options.target_tpurt)
     pm.addNestedPass<mlir::FuncOp>(
         mlir::TFDevice::CreateDecomposeResourceOpsPass());
 
@@ -2138,12 +2168,30 @@ void CreateTFExecutorToTFPipeline(mlir::OpPassManager &pm,
       mlir::TF::CreateTensorDeviceCopyConversionPass());
 
   // Outline auto-fusion clusters into tf_device.cluster_operations and then
-  // build tf_cpurt.fallback.execute operations from them. We currently support
-  // only tfrt fallback tensors as operands, so we disable these passes if
-  // we can have native ops after lowering.
+  // convert them to functions. We currently support only tfrt fallback tensors
+  // as operands, so we disable these passes if we can have native ops after
+  // lowering.
   if (!options.enable_native_ops) {
     pm.addNestedPass<mlir::FuncOp>(CreateTfCpurtClusteringPass(
         options.auto_fusion_oplist, options.auto_fusion_min_cluster_size));
+
+    // Sink small constants into the outlined clusters to reduce the number of
+    // arguments for each of the execute operations.
+    auto is_compilable_const = [](mlir::tf_device::ClusterOp cluster,
+                                  mlir::ElementsAttr value) -> bool {
+      // Ensure that cluster was formed for TFRT JIT compilation.
+      auto policy = cluster->getAttr("policy").dyn_cast_or_null<StringAttr>();
+      if (!policy || policy.getValue() != "tfrt.auto-fusion") return false;
+
+      // Check that TF->CPURT compiler supports constant compilation.
+      return mlir::succeeded(IsCompilableConstant(value));
+    };
+
+    pm.addNestedPass<mlir::FuncOp>(
+        mlir::TFDevice::CreateClusterConstantSinkingPass(is_compilable_const));
+
+    // Outline formed JIT compiled device clusters into function.
+    pm.addPass(CreateOutlineCpuRtClustersPass());
   }
 
   // Rewriter operation sequences to device specific fusions.
@@ -2161,30 +2209,20 @@ void CreateTFExecutorToTFPipeline(mlir::OpPassManager &pm,
   if (parsed_name.has_type && parsed_name.type == DEVICE_CPU)
     pm.addNestedPass<mlir::FuncOp>(mlir::TF::CreateFusedKernelMatcherPass());
 
+  if (options.tpu_fuse_ops) {
+    pm.addNestedPass<mlir::FuncOp>(
+        tfrt_compiler::CreateFuseTpuCompileAndExecutePass());
+    // Remove ops for the input to _TPUCompileMlirOp, which are no longer needed
+    // after CreateFuseTpuCompileAndExecutePass
+    pm.addNestedPass<mlir::FuncOp>(mlir::createCanonicalizerPass());
+  }
+
   pm.addPass(CreateLowerTFSavedModelPass(options.hoist_invariant_ops));
 }
 
 void CreateTfExecutorToTfrtPipelineHelper(mlir::OpPassManager &pm,
                                           const TfrtPipelineOptions &options) {
   CreateTFExecutorToTFPipeline(pm, options);
-
-  // Sink small integer constants into the outlined clusters. They typically
-  // correspond to reduction dimensions, transpose permutations, and other
-  // values that are required for TF->CPURT compilation.
-  auto is_compilable_const = [](mlir::tf_device::ClusterOp cluster,
-                                mlir::ElementsAttr value) -> bool {
-    // Ensure that cluster was formed for TFRT JIT compilation.
-    auto policy = cluster->getAttr("policy").dyn_cast_or_null<StringAttr>();
-    if (!policy || policy.getValue() != "tfrt.auto-fusion") return false;
-
-    // Check that TF->CPURT compiler supports constant compilation.
-    return mlir::succeeded(IsCompilableConstant(value));
-  };
-  pm.addNestedPass<mlir::FuncOp>(
-      mlir::TFDevice::CreateClusterConstantSinkingPass(is_compilable_const));
-
-  // Outline formed JIT compiled device clusters into function.
-  pm.addPass(CreateOutlineCpuRtClustersPass());
 
   pm.addPass(CreateTfToTfrtConversionPass(options));
 

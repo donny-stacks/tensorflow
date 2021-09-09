@@ -2979,6 +2979,7 @@ def zeros(shape, dtype=dtypes.float32, name=None):
 
 
 @tf_export(v1=["zeros_like"])
+@dispatch.register_unary_elementwise_api
 @dispatch.add_dispatch_support
 def zeros_like(tensor, dtype=None, name=None, optimize=True):
   """Creates a tensor with all elements set to zero.
@@ -3018,6 +3019,7 @@ def zeros_like(tensor, dtype=None, name=None, optimize=True):
 
 
 @tf_export("zeros_like", v1=[])
+@dispatch.register_unary_elementwise_api
 @dispatch.add_dispatch_support
 def zeros_like_v2(
     input,  # pylint: disable=redefined-builtin
@@ -3094,6 +3096,7 @@ def zeros_like_impl(tensor, dtype, name, optimize=True):
 
 
 @tf_export(v1=["ones_like"])
+@dispatch.register_unary_elementwise_api
 @dispatch.add_dispatch_support
 def ones_like(tensor, dtype=None, name=None, optimize=True):
   """Creates a tensor with all elements set to 1.
@@ -3127,6 +3130,7 @@ def ones_like(tensor, dtype=None, name=None, optimize=True):
 
 
 @tf_export("ones_like", v1=[])
+@dispatch.register_unary_elementwise_api
 @dispatch.add_dispatch_support
 def ones_like_v2(
     input,  # pylint: disable=redefined-builtin
@@ -3288,6 +3292,42 @@ def placeholder(dtype, shape=None, name=None):
 @tf_export(v1=["placeholder_with_default"])
 def placeholder_with_default(input, shape, name=None):  # pylint: disable=redefined-builtin
   """A placeholder op that passes through `input` when its output is not fed.
+
+  @compatibility(TF2)
+  This API is strongly discouraged for use with eager execution and
+  `tf.function`. The primary use of this API is for testing computation wrapped
+  within a `tf.function` where the input tensors might not have statically known
+  fully-defined shapes. The same can be achieved by creating a
+  [concrete function](
+  https://www.tensorflow.org/guide/function#obtaining_concrete_functions)
+  from the `tf.function` with a `tf.TensorSpec` input which has partially
+  defined shapes. For example, the code
+
+  >>> @tf.function
+  ... def f():
+  ...   x = tf.compat.v1.placeholder_with_default(
+  ...       tf.constant([[1., 2., 3.], [4., 5., 6.]]), [None, 3])
+  ...   y = tf.constant([[1.],[2.], [3.]])
+  ...   z = tf.matmul(x, y)
+  ...   assert z.shape[0] == None
+  ...   assert z.shape[1] == 1
+
+  >>> f()
+
+  can easily be replaced by
+
+  >>> @tf.function
+  ... def f(x):
+  ...   y = tf.constant([[1.],[2.], [3.]])
+  ...   z = tf.matmul(x, y)
+  ...   assert z.shape[0] == None
+  ...   assert z.shape[1] == 1
+
+  >>> g = f.get_concrete_function(tf.TensorSpec([None, 3]))
+
+  You can learn more about `tf.function` at [Better
+  performance with tf.function](https://www.tensorflow.org/guide/function).
+  @end_compatibility
 
   Args:
     input: A `Tensor`. The default value to produce when output is not fed.
@@ -4870,12 +4910,12 @@ def reverse_sequence_v2(input,
 
 
 @tf_export(v1=["gather"])
+@dispatch.add_dispatch_support
 @deprecation.deprecated_args(None,
                              ("The `validate_indices` argument has no effect. "
                               "Indices are always validated on CPU and never "
                               "validated on GPU."),
                              ("validate_indices", None))
-@dispatch.add_dispatch_support
 def gather(params,
            indices,
            validate_indices=None,
@@ -6643,3 +6683,7 @@ def guarantee_const(input, name=None):    # pylint: disable=redefined-builtin
     A `Tensor`. Has the same dtype as `input`.
   """
   return gen_array_ops.guarantee_const(input=input, name=name)
+
+
+# Register elementwise ops that don't have Python wrappers.
+dispatch.register_unary_elementwise_api(gen_array_ops.check_numerics)

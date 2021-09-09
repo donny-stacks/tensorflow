@@ -21,10 +21,11 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/dialect_registration.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
-#include "tensorflow/compiler/mlir/tfrt/jit/tf_cpurt_passes.h"
-#include "tensorflow/compiler/mlir/tfrt/jit/tf_cpurt_test_passes.h"
+#include "tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_passes.h"
+#include "tensorflow/compiler/mlir/tfrt/jit/transforms/tf_cpurt_test_passes.h"
 #include "tensorflow/compiler/mlir/tfrt/transforms/passes.h"
 #include "tensorflow/core/platform/init_main.h"
+#include "tensorflow/core/runtime_fallback/opdefs/tfrt_fallback.h"
 #include "tensorflow/core/runtime_fallback/opdefs/tfrt_fallback_async.h"
 #include "tfrt/init_tfrt_dialects.h"  // from @tf_runtime
 
@@ -42,12 +43,14 @@ int main(int argc, char **argv) {
   mlir::registerAllDialects(registry);
   mlir::RegisterAllTensorFlowDialects(registry);
   registry.insert<mlir::shape::ShapeDialect>();
+  registry.insert<mlir::mhlo::MhloDialect>();
   registry.insert<mlir::TFL::TensorFlowLiteDialect>();
+  registry.insert<tfrt::fallback::FallbackDialect>();
   registry.insert<tfrt::fallback_async::FallbackAsyncDialect>();
   tensorflow::RegisterTPUDialects(&registry);
 
   tfrt::RegisterTFRTDialects(registry);
   return failed(mlir::MlirOptMain(argc, argv, "TensorFlow TFRT pass driver\n",
                                   registry,
-                                  /*preloadDialectsInContext=*/true));
+                                  /*preloadDialectsInContext=*/false));
 }

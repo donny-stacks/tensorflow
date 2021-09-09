@@ -807,6 +807,39 @@ window_strides: the inter-window strides
 padding: the padding to apply at the start and end of each input dimensions
 )doc");
 
+REGISTER_OP("XlaRngBitGenerator")
+    .Input("algorithm: int32")
+    .Input("initial_state: uint64")
+    .Input("shape: Tshape")
+    .Output("output_key: uint64")
+    .Output("output: dtype")
+    .Attr("dtype: {int32, int64, uint32, uint64} = DT_UINT64")
+    .Attr("Tshape: {int32, int64} = DT_INT32")
+    .SetShapeFn([](shape_inference::InferenceContext* c) {
+      shape_inference::ShapeHandle algorithm;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(0), 0, &algorithm));
+      shape_inference::ShapeHandle initial_state;
+      TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &initial_state));
+
+      c->set_output(0, initial_state);
+      shape_inference::ShapeHandle output;
+      TF_RETURN_IF_ERROR(c->MakeShapeFromShapeTensor(2, &output));
+      c->set_output(1, output);
+      return Status::OK();
+    })
+    .Doc(R"doc(
+Stateless PRNG bit generator.
+Wraps the XLA RngBitGenerator operator, documented at
+ https://www.tensorflow.org/performance/xla/operation_semantics#rngbitgenerator.
+
+algorithm: The PRNG algorithm to use, one of
+  tf.random.Algorithm.{PHILOX, THREEFRY, AUTO_SELECT}.
+initial_state: Initial state for the PRNG algorithm. For THREEFRY, it should be
+  a u64[2] and for PHILOX a u64[3].
+shape: The output shape of the generated data.
+dtype: The type of the tensor.
+)doc");
+
 REGISTER_OP("XlaSelectAndScatter")
     .Input("operand: T")
     .Input("window_dimensions: Tindices")
@@ -1001,6 +1034,8 @@ REGISTER_OP("XlaSpmdFullToShardShape")
     .Output("output: T")
     .Attr("T: type")
     .Attr("manual_sharding: string")
+    .Attr("dim: int = -1")
+    .Attr("unspecified_dims: list(int) = []")
     .SetShapeFn([](shape_inference::InferenceContext* c) {
       auto input_handle = c->input(0);
       if (!c->RankKnown(input_handle)) {
@@ -1008,6 +1043,8 @@ REGISTER_OP("XlaSpmdFullToShardShape")
       }
       string sharding_attr;
       TF_RETURN_IF_ERROR(c->GetAttr("manual_sharding", &sharding_attr));
+      int32 single_dim;
+      TF_RETURN_IF_ERROR(c->GetAttr("dim", &single_dim));
       xla::OpSharding sharding;
       sharding.ParseFromString(sharding_attr);
       if (sharding.type() != xla::OpSharding::OTHER) {
@@ -1016,10 +1053,12 @@ REGISTER_OP("XlaSpmdFullToShardShape")
       std::vector<shape_inference::DimensionHandle> dims;
       for (int64_t i = 0; i < c->Rank(input_handle); ++i) {
         auto dim = c->Value(c->Dim(input_handle, i));
-        int64_t partitions_i = sharding.tile_assignment_dimensions(i);
-        if (dim != shape_inference::InferenceContext::kUnknownDim &&
-            partitions_i != 1) {
-          dim = (dim + partitions_i - 1) / partitions_i;
+        if (single_dim < 0 || single_dim == i) {
+          int64_t partitions_i = sharding.tile_assignment_dimensions(i);
+          if (dim != shape_inference::InferenceContext::kUnknownDim &&
+              partitions_i != 1) {
+            dim = (dim + partitions_i - 1) / partitions_i;
+          }
         }
         dims.push_back(c->MakeDim(dim));
       }
@@ -1032,6 +1071,8 @@ manual partitioning. It annotates the input (full-shape, to be automatically
 partitioned) with the same sharding used by manual partitioning, and outputs a
 shard-shaped tensor to be consumed by later manually-partitioned ops. If the
 shape is not evenly partitionable, the padding region will be masked with 0s.
+The conversion can happen partially in subgroups, by specifying the dim
+attribute, where only that dim will be converted.
 )doc");
 
 REGISTER_OP("XlaSpmdShardToFullShape")
@@ -1040,6 +1081,8 @@ REGISTER_OP("XlaSpmdShardToFullShape")
     .Attr("T: type")
     .Attr("manual_sharding: string")
     .Attr("full_shape: shape")
+    .Attr("dim: int = -1")
+    .Attr("unspecified_dims: list(int) = []")
     .SetShapeFn([](shape_inference::InferenceContext* c) {
       TensorShape shape_attr;
       TF_RETURN_IF_ERROR(c->GetAttr("full_shape", &shape_attr));
@@ -1052,7 +1095,8 @@ REGISTER_OP("XlaSpmdShardToFullShape")
 An op used by XLA SPMD partitioner to switch from manual partitioning to
 automatic partitioning. It converts the shard-shaped, manually partitioned input
 into full-shaped tensor to be partitioned automatically with the same sharding
-used by manual partitioning.
+used by manual partitioning. The conversion can happen partially in subgroups,
+by specifying the dim attribute, where only that dim will be converted.
 )doc");
 
 REGISTER_OP("XlaSharding")
@@ -1060,9 +1104,12 @@ REGISTER_OP("XlaSharding")
     .Output("output: T")
     .Attr("T: type")
     .Attr("sharding: string = ''")
+    .Attr("unspecified_dims: list(int) = []")
     .SetShapeFn(shape_inference::UnchangedShape)
     .Doc(R"doc(
-An op which shards the input based on the given sharding attribute.
+An op which shards the input based on the given sharding attribute. It can
+selectively annotate a subset of tensor dimensions by skipping unspecified_dims,
+and the sharding annotation should be replicated in those dims.
 )doc");
 
 REGISTER_OP("XlaReplicaId")

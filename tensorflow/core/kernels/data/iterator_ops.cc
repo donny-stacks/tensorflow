@@ -23,7 +23,6 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/graph_constructor.h"
 #include "tensorflow/core/common_runtime/graph_runner.h"
 #include "tensorflow/core/common_runtime/input_colocation_exemption_registry.h"
-#include "tensorflow/core/common_runtime/metrics.h"
 #include "tensorflow/core/common_runtime/renamed_device.h"
 #include "tensorflow/core/common_runtime/threadpool_device.h"
 #include "tensorflow/core/data/captured_function.h"
@@ -52,6 +51,7 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/stringprintf.h"
 #include "tensorflow/core/platform/casts.h"
 #include "tensorflow/core/platform/env.h"
+#include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/mem.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/refcount.h"
@@ -420,7 +420,7 @@ class IteratorVariantSerializer {
     return Status::OK();
   }
 
-  int64 NumTensors() { return num_tensors_; }
+  int64_t NumTensors() { return num_tensors_; }
 
   // Stores the IteratorStateVariant list into a pre-allocated tensor. Expects
   // that InitializeFromIterator was called before.
@@ -446,7 +446,7 @@ class IteratorVariantSerializer {
 
  private:
   bool can_serialize_ = false;
-  int64 num_tensors_;
+  int64_t num_tensors_;
   std::vector<IteratorStateVariant> variants_;
   std::unique_ptr<IteratorStateReader> reader_;
 };
@@ -943,9 +943,9 @@ Status IteratorGetNextOp::DoCompute(OpKernelContext* ctx) {
 Status IteratorGetNextAsOptionalOp::DoCompute(OpKernelContext* ctx) {
   profiler::TraceMe traceme(
       [&] {
-        return strings::StrCat(
-            "IteratorGetNextAsOptionalOp::DoCompute#id=", ctx->step_id(),
-            ",iter_num=", ctx->frame_iter().iter_id, "#");
+        return profiler::TraceMeEncode(
+            "IteratorGetNextAsOptionalOp::DoCompute",
+            {{"id", ctx->step_id()}, {"iter_num", ctx->frame_iter().iter_id}});
       },
       profiler::kInfo);
   tensorflow::ResourceTagger tag(kTFDataResourceTag,
@@ -1106,8 +1106,8 @@ void DeserializeIteratorOp::Compute(OpKernelContext* ctx) {
   if (!s.ok()) {
     OP_REQUIRES_OK(
         ctx,
-        Status(s.code(),
-               absl::StrCat(
+        errors::CreateWithUpdatedMessage(
+            s, absl::StrCat(
                    "Failed to restore dataset iterator from checkpoint: ",
                    s.error_message(),
                    ". Make sure the dataset definition has not changed between "

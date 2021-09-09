@@ -73,7 +73,7 @@ Status ToBool(gtl::ArraySlice<Tensor> t, bool* v) {
       CASE(uint8);
       CASE(int16);
       CASE(int8);
-      CASE(int64);
+      CASE(int64_t);
 #undef CASE
       case DT_BOOL:
         *v = t[0].scalar<bool>()();
@@ -367,6 +367,7 @@ class WhileOp : public AsyncOpKernel {
       // Use the non-callback-based implementation when kernels (and function
       // callbacks) execute inline to avoid stack overflow.
       OP_REQUIRES_OK_ASYNC(ctx, DoComputeSync(ctx), done);
+      done();
     } else {
       FHandle cond_handle;
       FHandle body_handle;

@@ -22,7 +22,6 @@ limitations under the License.
 #include "tensorflow/compiler/xla/executable_run_options.h"
 #include "tensorflow/compiler/xla/service/gpu/buffer_allocations.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_executable_run_options.h"
-#include "tensorflow/compiler/xla/service/gpu/hlo_execution_profiler.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/platform/stream_executor_no_cuda.h"
@@ -57,6 +56,7 @@ class Thunk {
     kGemm,
     kInfeed,
     kKernel,
+    kMemcpy,
     kMemset32BitValue,
     kMemzero,
     kNcclAllGather,
@@ -74,7 +74,7 @@ class Thunk {
   };
 
   struct ThunkInfo {
-    absl::optional<int64> profile_index;
+    absl::optional<int64_t> profile_index;
     std::string profile_annotation;
   };
 
@@ -110,7 +110,6 @@ class Thunk {
     se::Stream* stream;
     se::Stream* async_comms_stream;
     RunId run_id;
-    HloExecutionProfiler* profiler;                               // never null
     const DeviceAssignment* device_assn;                          // never null
     std::vector<std::function<void()>>* deferred_host_callbacks;  // never null
     const std::vector<GlobalDeviceId>* gpu_global_device_ids;     // may be null
@@ -129,7 +128,7 @@ class Thunk {
   static absl::string_view KindToString(Thunk::Kind kind);
 
  protected:
-  absl::optional<int64> profile_index() const { return profile_index_; }
+  absl::optional<int64_t> profile_index() const { return profile_index_; }
 
   // Safely copies the given buffer to the GPU, deleting it on the host only
   // after the copy has completed.
@@ -145,7 +144,7 @@ class Thunk {
 
  private:
   Kind kind_;
-  absl::optional<int64> profile_index_;
+  absl::optional<int64_t> profile_index_;
   std::string profile_annotation_;
 };
 

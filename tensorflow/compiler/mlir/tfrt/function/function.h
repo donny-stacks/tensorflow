@@ -39,10 +39,18 @@ class ModuleOp;
 namespace tensorflow {
 
 struct TfrtFunctionCompileOptions : public TfrtCompileOptions {
+  // Currently only SavedModel API inference uses the tpu_fuse_ops option
+  TfrtFunctionCompileOptions() { tpu_fuse_ops = false; }
+
   // If true, use ServingCoreSelector to pick TPU core. Otherwise, obtain core
   // location from assigned device name.
   // Currently we don't use core_selector for training use cases.
   bool tpu_use_core_selector = false;
+
+  // If true, use BundledTransferToTpuOp to transfer variables and input tensors
+  // to TPU.
+  bool tpu_use_bundled_transfer = false;
+
   // If true, lower an TF op that's placed on TPU device to be executed with
   // tfrt_fallback.execute.
   // Currently for training use cases we need to lower the op to corert.execute

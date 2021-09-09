@@ -23,6 +23,7 @@ limitations under the License.
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
 #include "tensorflow/compiler/xla/service/algebraic_simplifier.h"
+#include "tensorflow/compiler/xla/service/call_inliner.h"
 #include "tensorflow/compiler/xla/service/dump.h"
 #include "tensorflow/compiler/xla/service/gpu/cublas_pad_for_gemms.h"
 #include "tensorflow/compiler/xla/service/gpu/cudnn_fused_conv_rewriter.h"
@@ -30,12 +31,12 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/gpu/cudnn_vectorize_convolutions.h"
 #include "tensorflow/compiler/xla/service/gpu/cusolver_rewriter.h"
 #include "tensorflow/compiler/xla/service/gpu/gemm_algorithm_picker.h"
+#include "tensorflow/compiler/xla/service/gpu/gpu_asm_opts_util.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_conv_padding_legalization.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_conv_rewriter.h"
 #include "tensorflow/compiler/xla/service/gpu/gpu_layout_assignment.h"
 #include "tensorflow/compiler/xla/service/gpu/ir_emission_utils.h"
 #include "tensorflow/compiler/xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
-#include "tensorflow/compiler/xla/service/gpu/stream_executor_util.h"
 #include "tensorflow/compiler/xla/service/gpu/target_constants.h"
 #include "tensorflow/compiler/xla/service/hlo_constant_folding.h"
 #include "tensorflow/compiler/xla/service/hlo_cse.h"
@@ -61,8 +62,6 @@ namespace xla {
 namespace gpu {
 
 namespace {
-
-namespace tracing = tensorflow::tracing;
 
 static std::vector<std::string> CandidateCudaRoots(
     const HloModuleConfig& config) {
@@ -124,9 +123,10 @@ Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
       stream_exec->GetDeviceDescription().cuda_compute_capability());
   pipeline.AddPass<CudnnVectorizeConvolutions>(
       stream_exec->GetDeviceDescription().cuda_compute_capability());
-  // CudnnConvPadForIntegerConvolutions and CudnnConvPadForTensorCores leave
-  // behind unnecessary tuple/get-tuple-element pairs that TupleSimplifier
-  // fixes.
+  // The conv padding/vectorization passes which we need to get rid of.  They
+  // also leave behind unnecessary tuple/get-tuple-element pairs that
+  // TupleSimplifier fixes.
+  pipeline.AddPass<CallInliner>();
   pipeline.AddPass<TupleSimplifier>();
 
   // tf2xla bridge, DepthwiseConvolutionConverter and GpuConvRewriter
@@ -429,7 +429,8 @@ std::vector<uint8> NVPTXCompiler::CompileGpuAsmOrGetCachedResult(
     if (inserted) {
       CHECK(!cache_value->compilation_done);
       if (!ptx.empty()) {
-        auto ptxas_config = PtxOptsFromConfig(hlo_module_config);
+        auto ptxas_config =
+            PtxOptsFromDebugOptions(hlo_module_config.debug_options());
         if (relocatable) {
           ptxas_config.extra_flags.push_back("-c");
         }

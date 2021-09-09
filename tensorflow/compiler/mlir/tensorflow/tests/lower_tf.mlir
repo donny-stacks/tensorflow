@@ -584,10 +584,10 @@ func @ZerosLike_unranked(%arg0: tensor<*xi32>) -> tensor<*xi32> {
 }
 
 // CHECK-LABEL: func @ZerosLike_variant
-func @ZerosLike_variant(%arg0: tensor<!tf.variant<tensor<2xi32>>>) -> tensor<!tf.variant<tensor<2xi32>>> {
+func @ZerosLike_variant(%arg0: tensor<!tf_type.variant<tensor<2xi32>>>) -> tensor<!tf_type.variant<tensor<2xi32>>> {
   // CHECK: tf.ZerosLike
-  %0 = "tf.ZerosLike"(%arg0) : (tensor<!tf.variant<tensor<2xi32>>>) -> tensor<!tf.variant<tensor<2xi32>>>
-  return %0 : tensor<!tf.variant<tensor<2xi32>>>
+  %0 = "tf.ZerosLike"(%arg0) : (tensor<!tf_type.variant<tensor<2xi32>>>) -> tensor<!tf_type.variant<tensor<2xi32>>>
+  return %0 : tensor<!tf_type.variant<tensor<2xi32>>>
 }
 
 // CHECK-LABEL: func @OnesLike_unranked
@@ -639,10 +639,10 @@ func @addN_5(%arg0: tensor<*xf32>, %arg1: tensor<*xf32>, %arg2: tensor<*xf32>, %
 }
 
 // CHECK-LABEL: func @addN_variant
-func @addN_variant(%arg0: tensor<!tf.variant<tensor<2xf32>>>, %arg1: tensor<!tf.variant<tensor<2xf32>>>, %arg2: tensor<!tf.variant<tensor<2xf32>>>) -> tensor<!tf.variant<tensor<2xf32>>> {
+func @addN_variant(%arg0: tensor<!tf_type.variant<tensor<2xf32>>>, %arg1: tensor<!tf_type.variant<tensor<2xf32>>>, %arg2: tensor<!tf_type.variant<tensor<2xf32>>>) -> tensor<!tf_type.variant<tensor<2xf32>>> {
   // CHECK: tf.AddN
-  %0 = "tf.AddN"(%arg0, %arg1, %arg2) : (tensor<!tf.variant<tensor<2xf32>>>, tensor<!tf.variant<tensor<2xf32>>>, tensor<!tf.variant<tensor<2xf32>>>) -> tensor<!tf.variant<tensor<2xf32>>>
-  return %0 : tensor<!tf.variant<tensor<2xf32>>>
+  %0 = "tf.AddN"(%arg0, %arg1, %arg2) : (tensor<!tf_type.variant<tensor<2xf32>>>, tensor<!tf_type.variant<tensor<2xf32>>>, tensor<!tf_type.variant<tensor<2xf32>>>) -> tensor<!tf_type.variant<tensor<2xf32>>>
+  return %0 : tensor<!tf_type.variant<tensor<2xf32>>>
 }
 
 // CHECK-LABEL: func @DynamicStitch_simple
@@ -776,6 +776,15 @@ func @Reciprocal_complexf64(%arg0: tensor<*xcomplex<f64>>) -> tensor<*xcomplex<f
   // CHECK: "tf.Div"(%[[ONE]], %arg0) : (tensor<complex<f64>>, tensor<*xcomplex<f64>>) -> tensor<*xcomplex<f64>>
   %0 = "tf.Reciprocal"(%arg0) : (tensor<*xcomplex<f64>>) -> tensor<*xcomplex<f64>>
   return %0 : tensor<*xcomplex<f64>>
+}
+
+// Inv is the same as Reciprocal
+// CHECK-LABEL: @Inv_i32
+func @Inv_i32(%arg0: tensor<*xi32>) -> tensor<*xi32> {
+  // CHECK: %[[ONE:.*]] = "tf.Const"() {value = dense<1> : tensor<i32>} : () -> tensor<i32>
+  // CHECK: "tf.Div"(%[[ONE]], %arg0) : (tensor<i32>, tensor<*xi32>) -> tensor<*xi32>
+  %0 = "tf.Inv"(%arg0) : (tensor<*xi32>) -> tensor<*xi32>
+  return %0 : tensor<*xi32>
 }
 
 // CHECK-LABEL: @ScatterNd
@@ -1178,6 +1187,25 @@ func @scatter_nd_updates(%arg0: tensor<14xf32>, %arg1: tensor<1x1xi32>, %arg2: t
   // CHECK: %[[SCATTER1:.*]] = "tf.TensorScatterAdd"(%[[CST1]], %arg1, %arg2) : (tensor<14xf32>, tensor<1x1xi32>, tensor<1xf32>) -> tensor<14xf32>
   // CHECK: %[[ADD:.*]] = "tf.Add"(%[[MUL]], %[[SCATTER1]]) : (tensor<14xf32>, tensor<14xf32>) -> tensor<14xf32>
   // CHECK: return %[[ADD]] : tensor<14xf32>
+}
+
+func @scatter_nd_updates_bool(%arg0: tensor<1x24xi1>, %arg1: tensor<1x2x2xi32>, %arg2: tensor<1x2xi1>) -> tensor<1x24xi1> {
+  %0 = "tf.TensorScatterUpdate"(%arg0, %arg1, %arg2) : (tensor<1x24xi1>, tensor<1x2x2xi32>, tensor<1x2xi1>) -> tensor<1x24xi1>
+  return %0 : tensor<1x24xi1>
+
+// CHECK-LABEL: scatter_nd_updates_bool(
+// CHECK:           %[[CST:.*]] = "tf.Const"() {value = dense<1> : tensor<i32>} : () -> tensor<i32>
+// CHECK:           %[[CST0:.*]] = "tf.Const"() {value = dense<1> : tensor<1x2xi32>} : () -> tensor<1x2xi32>
+// CHECK:           %[[CST1:.*]] = "tf.Const"() {value = dense<0> : tensor<1x24xi32>} : () -> tensor<1x24xi32>
+// CHECK:           %[[CAST0:.*]] = "tf.Cast"(%arg0) {Truncate = false} : (tensor<1x24xi1>) -> tensor<1x24xi32>
+// CHECK:           %[[CAST1:.*]] = "tf.Cast"(%arg2) {Truncate = false} : (tensor<1x2xi1>) -> tensor<1x2xi32>
+// CHECK:           %[[SCATTER:.*]] = "tf.TensorScatterAdd"(%[[CST1]], %arg1, %[[CST0]]) : (tensor<1x24xi32>, tensor<1x2x2xi32>, tensor<1x2xi32>) -> tensor<1x24xi32>
+// CHECK:           %[[SUB:.*]] = "tf.Sub"(%[[CST]], %[[SCATTER]]) : (tensor<i32>, tensor<1x24xi32>) -> tensor<1x24xi32>
+// CHECK:           %[[MUL:.*]] = "tf.Mul"(%[[SUB]], %[[CAST0]]) : (tensor<1x24xi32>, tensor<1x24xi32>) -> tensor<1x24xi32>
+// CHECK:           %[[SCATTER1:.*]] = "tf.TensorScatterAdd"(%[[CST1]], %arg1, %[[CAST1]]) : (tensor<1x24xi32>, tensor<1x2x2xi32>, tensor<1x2xi32>) -> tensor<1x24xi32>
+// CHECK:           %[[ADD:.*]] = "tf.Add"(%[[MUL]], %[[SCATTER1]]) : (tensor<1x24xi32>, tensor<1x24xi32>) -> tensor<1x24xi32>
+// CHECK:           %[[CAST2:.*]] = "tf.Cast"(%[[ADD]]) {Truncate = false} : (tensor<1x24xi32>) -> tensor<1x24xi1>
+// CHECK:           return %[[CAST2]] : tensor<1x24xi1>
 }
 
 //===----------------------------------------------------------------------===//

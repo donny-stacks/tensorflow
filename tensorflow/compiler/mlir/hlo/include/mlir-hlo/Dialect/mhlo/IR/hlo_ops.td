@@ -24,7 +24,7 @@ include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir-hlo/Dialect/mhlo/IR/hlo_ops_base.td"
 include "mlir-hlo/Dialect/mhlo/IR/hlo_utils.td"
-include "mlir-hlo/Dialect/mhlo/IR/infer_fusibility_op_interface.td"
+include "mlir-hlo/Dialect/mhlo/IR/infer_shape_equality_op_interface.td"
 
 class HLO_Op<string mnemonic, list<OpTrait> traits> :
     Op<HLO_Dialect, mnemonic, traits> {
@@ -39,16 +39,6 @@ class HLO_Op<string mnemonic, list<OpTrait> traits> :
 class HLO_ShapedInterfaceOp<string mnemonic, list<OpTrait> traits> :
     HLO_Op<mnemonic, traits # [DeclareOpInterfaceMethods<InferShapedTypeOpInterface,
     ["reifyReturnTypeShapes"]>]> {
-}
-
-def HLO_LOOP_FUSION : StrEnumAttrCase<"kLoop">;
-def HLO_INPUT_FUSION : StrEnumAttrCase<"kInput">;
-def HLO_OUTPUT_FUSION : StrEnumAttrCase<"kOutput">;
-def HLO_CUSTOM_FUSION : StrEnumAttrCase<"kCustom">;
-def HLO_FusionKindAttr : StrEnumAttr<"FusionKind", "fusion kind", [
-    HLO_LOOP_FUSION, HLO_INPUT_FUSION, HLO_OUTPUT_FUSION, HLO_CUSTOM_FUSION
-]> {
-  let cppNamespace = "::mlir::mhlo";
 }
 
 //===----------------------------------------------------------------------===//
@@ -133,7 +123,7 @@ def HLO_CreateTokenOp : HLO_Op<"create_token", [NoSideEffect]> {
 
 class HLO_UnaryElementwiseOp<string mnemonic, list<OpTrait> traits,
     Type TensorType> : HLO_Op<mnemonic, traits # [Elementwise,
-    InferShapedTypeOpInterface, InferFusibilityOpInterface,
+    InferShapedTypeOpInterface, InferShapeEqualityOpInterface,
     SameOperandsAndResultShape]> {
   let arguments = (ins TensorType:$operand);
   let results = (outs TensorType);
@@ -153,9 +143,6 @@ class HLO_UnaryElementwiseOp<string mnemonic, list<OpTrait> traits,
     }
     bool inferInputOutputShapeEquality(int input, int output) {
       return true;
-    }
-    llvm::Optional<Value> inferEffectiveWorkloadShape() {
-      return getOperation()->getResult(0);
     }
   }];
 }
@@ -448,7 +435,7 @@ def HLO_TanhOp: HLO_UnaryElementwiseOp<"tanh",
 
 class HLO_BinaryElementwiseOp<string mnemonic, list<OpTrait> traits> :
     HLO_Op<mnemonic, traits # [InferShapedTypeOpInterface,
-    InferFusibilityOpInterface, SameOperandsAndResultShape, Elementwise]> {
+    InferShapeEqualityOpInterface, SameOperandsAndResultShape, Elementwise]> {
   let arguments = (ins
     HLO_Tensor:$lhs,
     HLO_Tensor:$rhs
@@ -473,9 +460,6 @@ class HLO_BinaryElementwiseOp<string mnemonic, list<OpTrait> traits> :
     }
     bool inferInputOutputShapeEquality(int input, int output) {
       return true;
-    }
-    llvm::Optional<Value> inferEffectiveWorkloadShape() {
-      return getOperation()->getResult(0);
     }
   }];
 
@@ -897,7 +881,7 @@ def HLO_CaseOp: HLO_Op<"case", [
 
 def HLO_WhileOp: HLO_Op<"while", [
       RecursiveSideEffects,
-      SameOperandsAndResultType,
+      HLO_PairwiseSameOperandAndResultType,
       SingleBlockImplicitTerminator<"ReturnOp">
     ]> {
   let summary = "While operator";
@@ -994,7 +978,7 @@ def HLO_ReduceOp: HLO_ShapedInterfaceOp<"reduce", [
       RecursiveSideEffects,
       SameVariadicOperandSize,
       SingleBlockImplicitTerminator<"ReturnOp">,
-      InferFusibilityOpInterface
+      InferShapeEqualityOpInterface
     ]> {
   let summary = "Reduce operator";
   let description = [{
@@ -1004,25 +988,16 @@ def HLO_ReduceOp: HLO_ShapedInterfaceOp<"reduce", [
     See https://www.tensorflow.org/xla/operation_semantics#reduce.
   }];
   let arguments = (ins
-    Variadic<HLO_TensorOrTuple>:$inputs,
-    Variadic<HLO_TensorOrTuple>:$init_values,
+    Variadic<HLO_Tensor>:$inputs,
+    Variadic<HLO_Tensor>:$init_values,
     I64ElementsAttr:$dimensions
   );
 
-  let results = (outs Variadic<HLO_TensorOrTuple>);
+  let results = (outs Variadic<HLO_Tensor>);
 
   let builders = [
     OpBuilder<(ins "ValueRange":$inputs, "ValueRange":$init_values,
       "DenseIntElementsAttr":$dimensions)>];
-
-  let extraClassDeclaration = [{
-    bool isFusibleWithConsumer() {
-      return false;
-    }
-    llvm::Optional<Value> inferEffectiveWorkloadShape() {
-      return getOperation()->getOperand(0);
-    }
-  }];
 
   let hasFolder = 1;
   let hasCanonicalizer = 1;
@@ -1521,7 +1496,12 @@ def HLO_CustomCallOp: HLO_Op<"custom_call", []> {
     Variadic<HLO_TensorOrTuple>:$args,
     StrAttr:$call_target_name,
     DefaultValuedAttr<BoolAttr, "false">:$has_side_effect,
-    DefaultValuedAttr<StrAttr, "">:$backend_config
+    DefaultValuedAttr<StrAttr, "">:$backend_config,
+    // TODO(b/189822916): Remove this field when all clients are migrated to
+    // the status-returning API.
+    DefaultValuedAttr<HLO_CustomCallApiVersionAttr,
+                      "CustomCallApiVersion::API_VERSION_ORIGINAL">:
+                      $api_version
   );
   let results = (outs Variadic<HLO_TensorOrTuple>);
   let hasCustomHLOConverter = 1;
@@ -2307,7 +2287,7 @@ def HLO_DynamicConvOp : HLO_Op<"dynamic_conv", [NoSideEffect]>, BASE_HLO_ConvOp 
   let results = (outs HLO_Tensor);
   let hasCustomHLOConverter = 1;
 }
-  
+
 def HLO_PrintOp : HLO_Op<"print", []> {
   let summary = "Print operation";
   let description = [{

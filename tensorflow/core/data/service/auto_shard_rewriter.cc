@@ -27,8 +27,9 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "absl/types/optional.h"
 #include "tensorflow/core/data/rewrite_utils.h"
+#include "tensorflow/core/data/service/common.h"
 #include "tensorflow/core/data/service/common.pb.h"
-#include "tensorflow/core/data/service/data_service.h"
+#include "tensorflow/core/data/service/url.h"
 #include "tensorflow/core/framework/dataset_options.pb.h"
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/node_def.pb.h"
@@ -53,44 +54,12 @@ namespace {
 
 using ::tensorflow::data::experimental::AutoShardDatasetOp;
 
-// Converts tf.data service `sharding_policy` to `AutoShardPolicy`.
-AutoShardPolicy ToAutoShardPolicy(
-    const ProcessingModeDef::ShardingPolicy sharding_policy) {
-  switch (sharding_policy) {
-    case ProcessingModeDef::FILE:
-      return AutoShardPolicy::FILE;
-    case ProcessingModeDef::DATA:
-      return AutoShardPolicy::DATA;
-    case ProcessingModeDef::FILE_OR_DATA:
-      return AutoShardPolicy::AUTO;
-    case ProcessingModeDef::HINT:
-      return AutoShardPolicy::HINT;
-    default:
-      return AutoShardPolicy::OFF;
-  }
-}
-
-// Extracts the host from `address`.
-std::string GetHost(absl::string_view address) {
-  absl::string_view::size_type port_pos = address.find_last_of(':');
-  return std::string(address.substr(0, port_pos));
-}
-
-// Extracts the port from `address`. Returns nullopt if `address` does not
-// specify a port.
-absl::optional<absl::string_view> GetPort(absl::string_view address) {
-  absl::string_view::size_type port_pos = address.find_last_of(':');
-  if (port_pos == absl::string_view::npos) {
-    return absl::nullopt;
-  }
-  return address.substr(port_pos + 1);
-}
-
 // A dynamic port has form %port% or %port_foo% that is to be replaced with the
 // actual port.
 bool HasDynamicPort(absl::string_view address) {
-  absl::optional<absl::string_view> port = GetPort(address);
-  return port && absl::StartsWith(*port, "%port") && absl::EndsWith(*port, "%");
+  URL url(address);
+  return url.has_port() && absl::StartsWith(url.port(), "%port") &&
+         absl::EndsWith(url.port(), "%");
 }
 
 // Returns true if `config_address` has no port or a dynamic port (e.g.: %port%)
@@ -108,17 +77,19 @@ bool HasDynamicPort(absl::string_view address) {
 //  localhost:%port%                  localhost:10000
 bool ShouldReplaceDynamicPort(absl::string_view config_address,
                               absl::string_view worker_address) {
-  return (!GetPort(config_address) || HasDynamicPort(config_address)) &&
-         GetPort(worker_address) &&
-         GetHost(config_address) == GetHost(worker_address);
+  URL config_url(config_address), worker_url(worker_address);
+  return (!config_url.has_port() || HasDynamicPort(config_address)) &&
+         worker_url.has_port() && config_url.host() == worker_url.host();
 }
 }  // namespace
 
-AutoShardRewriter::AutoShardRewriter(const TaskDef& task_def)
-    : auto_shard_policy_(
-          ToAutoShardPolicy(task_def.processing_mode_def().sharding_policy())),
-      num_workers_(task_def.num_workers()),
-      worker_index_(task_def.worker_index()) {}
+StatusOr<AutoShardRewriter> AutoShardRewriter::Create(const TaskDef& task_def) {
+  TF_ASSIGN_OR_RETURN(
+      AutoShardPolicy auto_shard_policy,
+      ToAutoShardPolicy(task_def.processing_mode_def().sharding_policy()));
+  return AutoShardRewriter(auto_shard_policy, task_def.num_workers(),
+                           task_def.worker_index());
+}
 
 StatusOr<GraphDef> AutoShardRewriter::ApplyAutoShardRewrite(
     const GraphDef& graph_def) {
@@ -127,7 +98,9 @@ StatusOr<GraphDef> AutoShardRewriter::ApplyAutoShardRewrite(
   }
 
   VLOG(2) << "Applying auto-shard policy "
-          << AutoShardPolicy_Name(auto_shard_policy_);
+          << AutoShardPolicy_Name(auto_shard_policy_)
+          << ". Number of workers: " << num_workers_
+          << "; worker index: " << worker_index_ << ".";
   grappler::AutoShard autoshard;
   tensorflow::RewriterConfig::CustomGraphOptimizer config = GetRewriteConfig();
   TF_RETURN_IF_ERROR(autoshard.Init(&config));
@@ -145,6 +118,12 @@ StatusOr<GraphDef> AutoShardRewriter::ApplyAutoShardRewrite(
       &cluster, *grappler_item, &rewritten_graph, &stats));
   return rewritten_graph;
 }
+
+AutoShardRewriter::AutoShardRewriter(AutoShardPolicy auto_shard_policy,
+                                     int64 num_workers, int64 worker_index)
+    : auto_shard_policy_(auto_shard_policy),
+      num_workers_(num_workers),
+      worker_index_(worker_index) {}
 
 tensorflow::RewriterConfig::CustomGraphOptimizer
 AutoShardRewriter::GetRewriteConfig() const {
@@ -193,7 +172,7 @@ void WorkerIndexResolver::AddWorker(absl::string_view worker_address) {
   }
 }
 
-StatusOr<int64> WorkerIndexResolver::GetWorkerIndex(
+StatusOr<int64_t> WorkerIndexResolver::GetWorkerIndex(
     absl::string_view worker_address) const {
   const auto it = absl::c_find(worker_addresses_, worker_address);
   if (it == worker_addresses_.cend()) {

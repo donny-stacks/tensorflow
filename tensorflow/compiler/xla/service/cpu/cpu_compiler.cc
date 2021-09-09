@@ -85,6 +85,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/dfs_hlo_visitor_with_default.h"
 #include "tensorflow/compiler/xla/service/dot_decomposer.h"
 #include "tensorflow/compiler/xla/service/dump.h"
+#include "tensorflow/compiler/xla/service/dynamic_dimension_simplifier.h"
 #include "tensorflow/compiler/xla/service/dynamic_index_splitter.h"
 #include "tensorflow/compiler/xla/service/dynamic_padder.h"
 #include "tensorflow/compiler/xla/service/eigh_expander.h"
@@ -106,6 +107,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/hlo_verifier.h"
 #include "tensorflow/compiler/xla/service/indexed_array_analysis.h"
 #include "tensorflow/compiler/xla/service/llvm_compiler.h"
+#include "tensorflow/compiler/xla/service/llvm_ir/llvm_command_line_options.h"
 #include "tensorflow/compiler/xla/service/llvm_ir/llvm_util.h"
 #include "tensorflow/compiler/xla/service/logistic_expander.h"
 #include "tensorflow/compiler/xla/service/map_inliner.h"
@@ -223,12 +225,12 @@ absl::once_flag llvm_command_line_options_initialized;
 // recorded.
 class CollectProfileCandidates : public DfsHloVisitorWithDefault {
  public:
-  static StatusOr<std::unordered_map<const HloInstruction*, int64>>
+  static StatusOr<std::unordered_map<const HloInstruction*, int64_t>>
   GetCandidatesForComputation(
       const HloComputation& computation,
-      const std::unordered_map<const HloInstruction*, int64>&
+      const std::unordered_map<const HloInstruction*, int64_t>&
           assigned_indices) {
-    std::unordered_map<const HloInstruction*, int64> hlo_to_profile_idx;
+    std::unordered_map<const HloInstruction*, int64_t> hlo_to_profile_idx;
     CollectProfileCandidates profile_candidates_for_computation(
         &hlo_to_profile_idx, assigned_indices);
     TF_RETURN_IF_ERROR(computation.Accept(&profile_candidates_for_computation));
@@ -237,8 +239,9 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
 
  private:
   CollectProfileCandidates(
-      std::unordered_map<const HloInstruction*, int64>* hlo_to_profile_idx,
-      const std::unordered_map<const HloInstruction*, int64>& assigned_indices)
+      std::unordered_map<const HloInstruction*, int64_t>* hlo_to_profile_idx,
+      const std::unordered_map<const HloInstruction*, int64_t>&
+          assigned_indices)
       : hlo_to_profile_idx_(hlo_to_profile_idx),
         assigned_indices_(assigned_indices) {}
 
@@ -293,8 +296,8 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
     return Status::OK();
   }
 
-  std::unordered_map<const HloInstruction*, int64>* hlo_to_profile_idx_;
-  const std::unordered_map<const HloInstruction*, int64>& assigned_indices_;
+  std::unordered_map<const HloInstruction*, int64_t>* hlo_to_profile_idx_;
+  const std::unordered_map<const HloInstruction*, int64_t>& assigned_indices_;
 };
 
 }  // namespace
@@ -360,7 +363,11 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<LogisticExpander>(
       /*expansion_type=*/LogisticExpansionType::kExp);
   pipeline.AddPass<ConditionalCanonicalizer>();
-  pipeline.AddPass<DynamicPadder>();
+  pipeline.AddPass<DynamicDimensionSimplifier>();
+  auto dynamic_padder_options = DynamicPadderOptions();
+  dynamic_padder_options.shape_check_mode =
+      DynamicDimensionInference::ShapeCheckMode::kCompileTime;
+  pipeline.AddPass<DynamicPadder>(dynamic_padder_options);
   pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateAllScatters);
   pipeline.AddPass<ConvCanonicalization>(target_machine_features);
 
@@ -416,8 +423,7 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // flattened.
   pipeline.AddPass<FlattenCallGraph>();
   pipeline.AddPass<CpuLayoutAssignment>(
-      module->mutable_entry_computation_layout(),
-      LayoutAssignment::InstructionCanChangeLayout, target_machine_features);
+      module->mutable_entry_computation_layout(), target_machine_features);
 
   pipeline.AddPass<CpuInstructionFusion>();
 
@@ -490,7 +496,7 @@ Status CpuCompiler::RunHloPasses(HloModule* module, bool is_aot_compile,
 namespace {
 
 // Align buffers to 16-byte boundaries.
-int64 memory_alignment(LogicalBuffer::Color) {
+int64_t memory_alignment(LogicalBuffer::Color) {
   return cpu_function_runtime::kMinAlign;
 }
 
@@ -562,9 +568,9 @@ Status VerifyLlvmModule(const llvm::Module& llvm_module) {
 
 Status CreateHloProfilingArtifacts(
     const HloModule& module,
-    std::unordered_map<const HloInstruction*, int64>*
+    std::unordered_map<const HloInstruction*, int64_t>*
         instruction_to_profile_idx,
-    std::unordered_map<const HloComputation*, int64>*
+    std::unordered_map<const HloComputation*, int64_t>*
         computation_to_profile_idx,
     std::unique_ptr<HloProfileIndexMap>* hlo_profile_index_map,
     std::unique_ptr<HloProfilePrinterData>* hlo_profile_printer_data) {
@@ -580,7 +586,7 @@ Status CreateHloProfilingArtifacts(
   auto shape_size_bytes = [](const Shape& shape) {
     // On the cpu, opaques are pointers.
     if (shape.IsOpaque()) {
-      return static_cast<int64>(sizeof(void*));
+      return static_cast<int64_t>(sizeof(void*));
     }
     return ShapeUtil::ByteSizeOf(shape, sizeof(void*));
   };
@@ -675,6 +681,11 @@ struct OrcJITPostCompilationHook {
   const HloModule* module;
 };
 
+void InitializeLLVMCommandLineOptions(const HloModuleConfig& config) {
+  llvm_ir::InitializeLLVMCommandLineOptions(
+      config.debug_options().xla_backend_extra_options());
+}
+
 }  // namespace
 
 StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
@@ -688,7 +699,7 @@ StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
   auto slow_compile_alarm = SlowCompilationAlarm(slow_compilation_msg);
 
   absl::call_once(llvm_command_line_options_initialized,
-                  &llvm_ir::InitializeLLVMCommandLineOptions, module->config());
+                  &InitializeLLVMCommandLineOptions, module->config());
 
   ModuleHook pre_optimization_ir_hook;
   ModuleHook post_optimization_ir_hook;
@@ -719,8 +730,8 @@ StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
   llvm_module->setTargetTriple((*jit)->target_triple().getTriple());
 
   HloComputation* entry_computation = module->entry_computation();
-  std::unordered_map<const HloInstruction*, int64> instruction_to_profile_idx;
-  std::unordered_map<const HloComputation*, int64> computation_to_profile_idx;
+  std::unordered_map<const HloInstruction*, int64_t> instruction_to_profile_idx;
+  std::unordered_map<const HloComputation*, int64_t> computation_to_profile_idx;
   std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map;
   std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data;
   if (module->config().hlo_profiling_enabled()) {
@@ -843,8 +854,7 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
       module_group->ConsumeModules();
 
   absl::call_once(llvm_command_line_options_initialized,
-                  &llvm_ir::InitializeLLVMCommandLineOptions,
-                  modules[0]->config());
+                  &InitializeLLVMCommandLineOptions, modules[0]->config());
 
   // We can pass just one llvm::TargetOptions when we compile the LLVM module,
   // so we bail if the configs have conflicting flags. At the moment, the only
@@ -965,8 +975,10 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
     }
     DumpHloModuleIfEnabled(*module, *assignment, "cpu_after_optimizations");
 
-    std::unordered_map<const HloInstruction*, int64> instruction_to_profile_idx;
-    std::unordered_map<const HloComputation*, int64> computation_to_profile_idx;
+    std::unordered_map<const HloInstruction*, int64_t>
+        instruction_to_profile_idx;
+    std::unordered_map<const HloComputation*, int64_t>
+        computation_to_profile_idx;
     std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map;
     std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data;
 

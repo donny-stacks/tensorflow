@@ -83,6 +83,7 @@ foreach fromToBinPair = [[TF_AddV2Op, HLOClient_BroadcastAddOp],
                          [TF_MaximumOp, HLOClient_BroadcastMaxOp],
                          [TF_MinimumOp, HLOClient_BroadcastMinOp],
                          [TF_MulOp, HLOClient_BroadcastMulOp],
+                         [TF_NextAfterOp, HLOClient_BroadcastNextAfterOp],
                          [TF_PolygammaOp, HLOClient_BroadcastPolygammaOp],
                          [TF_PowOp, HLOClient_BroadcastPowOp],
                          [TF_RealDivOp, HLOClient_BroadcastDivOp],
@@ -201,7 +202,7 @@ def : Pat<(TF_RiscDotOp $a, $b, $transpose_a, $transpose_b),
 class DirectLogicalBinaryPat<Op FromOp, Op ToOp>
   : Pat<(FromOp AnyTensor:$l, AnyTensor:$r),
         (ToOp $l, $r, (BinBroadcastDimensions $l, $r)),
-        [(SignedIntTensor $l)]>;
+        [(AnyTypeOf<[SignedIntTensor, UnsignedIntTensor]> $l)]>;
 
 foreach fromToBinPair = [[TF_LogicalAndOp, HLOClient_BroadcastAndOp],
                          [TF_LogicalOrOp, HLOClient_BroadcastOrOp],
@@ -345,7 +346,7 @@ def : Pat<(TF_PadV2Op $input, (ConstantLikeMatcher ElementsAttr:$padding), $c),
 // Identity op patterns.
 //===----------------------------------------------------------------------===//
 
-foreach src = [TF_IdentityOp, TF_StopGradientOp] in
+foreach src = [TF_IdentityOp, TF_StopGradientOp, TF__EagerConstOp] in
   def : Pat<(src $op), (replaceWithValue $op)>;
 
 // TODO(b/32223192): Support CheckNumerics in HLO.
@@ -548,8 +549,8 @@ def : Pattern<
 // Slice op patterns.
 //===----------------------------------------------------------------------===//
 
-def CastToI64AndUnpackTensor: NativeCodeCall<
-  "UnpackTensorAlongZeroDim($0.getLoc(), CastValueToI64($0.getLoc(), $1, &$_builder), &$_builder).output()">;
+def UnpackStartingIndices: NativeCodeCall<
+  "UnpackTensorAlongZeroDim($0.getLoc(), $1, &$_builder).output()">;
 
 def CanBeTranslatedToDynamicSlice : Constraint<CPred<
   "CanBeTranslatedToDynamicSlice($0, $1, $2.cast<DenseIntElementsAttr>())">>;
@@ -561,7 +562,7 @@ def TFSliceSizes2HLOSliceSizes : NativeCodeCall<
 def : Pat<(TF_SliceOp:$op HLO_Tensor:$input, HLO_Tensor:$starting_indices,
            (ConstantLikeMatcher AnyAttr:$slice_sizes)),
           (HLO_DynamicSliceOp $input,
-           (CastToI64AndUnpackTensor $op, $starting_indices),
+           (UnpackStartingIndices $op, $starting_indices),
            (TFSliceSizes2HLOSliceSizes $input, $starting_indices, $slice_sizes)),
           [(CanBeTranslatedToDynamicSlice $input, $starting_indices,
             $slice_sizes)]>;

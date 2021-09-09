@@ -17,6 +17,7 @@ limitations under the License.
 #define TENSORFLOW_CORE_FRAMEWORK_METRICS_H_
 
 #include "absl/container/flat_hash_map.h"
+#include "tensorflow/core/framework/dataset_options.pb.h"
 #include "tensorflow/core/lib/monitoring/counter.h"
 #include "tensorflow/core/lib/monitoring/gauge.h"
 #include "tensorflow/core/platform/statusor.h"
@@ -101,6 +102,14 @@ void RecordTFDataServiceWorkerCreated();
 // The `name` argument identifies the Dataset type (e.g. "TFRecordDataset").
 void RecordTFDataFilename(const string& name, const string& filename);
 
+// Records statistics of tf.data auto sharding.
+//
+// The `id` is a unique identifier of the input pipeline. The `policy`
+// identifies the auto-sharding policy used, the `num_workers` identifies the
+// number of workers, and `num_replicas` identifies the number of replicas.
+void RecordTFDataAutoShard(const string& id, data::AutoShardPolicy policy,
+                           int64 num_workers, int64 num_replicas);
+
 // Records parsing of dense tensor features.
 void RecordParseDenseFeature(int64_t num_features);
 
@@ -143,6 +152,12 @@ void UpdateGraphOptimizationPassTime(const string& pass_name,
                                      const uint64 running_time_usecs);
 void UpdateGrapplerPassTime(const string& pass_name,
                             const uint64 running_time_usecs);
+void UpdateMlirGraphOptimizationPassTime(const string& pass_name,
+                                         const uint64 running_time_usecs);
+void UpdateTFDataPassTime(const string& pass_name,
+                          const uint64 running_time_usecs);
+void UpdateGraphOptimizerPassTime(const string& pass_name,
+                                  const uint64 running_time_usecs);
 
 // Updates metrics for time to distribute variables to all TPU hosts.
 void UpdateTpuVariableDistributionTime(const uint64 distribution_time_usecs);

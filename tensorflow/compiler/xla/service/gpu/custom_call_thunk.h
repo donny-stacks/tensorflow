@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUSTOM_CALL_THUNK_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_CUSTOM_CALL_THUNK_H_
 
+#include "tensorflow/compiler/xla/service/custom_call_status_internal.h"
 #include "tensorflow/compiler/xla/service/gpu/buffer_allocations.h"
-#include "tensorflow/compiler/xla/service/gpu/hlo_execution_profiler.h"
 #include "tensorflow/compiler/xla/service/gpu/thunk.h"
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -48,8 +48,8 @@ class CustomCallThunk : public Thunk {
   using Stream = void*;
 #endif  //  GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
-  using CustomCallTarget =
-      std::function<void(Stream, void**, const char*, size_t)>;
+  using CustomCallTarget = std::function<void(Stream, void**, const char*,
+                                              size_t, XlaCustomCallStatus*)>;
   CustomCallThunk(ThunkInfo thunk_info, CustomCallTarget call_target,
                   std::vector<OptionalSlice> operands,
                   std::vector<OptionalSlice> results,
@@ -62,6 +62,15 @@ class CustomCallThunk : public Thunk {
   const std::vector<OptionalSlice> operands_;
   const std::vector<OptionalSlice> results_;
   const std::string opaque_;
+};
+
+// Resources needed to execute a CustomCall BefThunk.
+struct CustomCallContext {
+  explicit CustomCallContext(
+      const CustomCallThunk::CustomCallTarget& call_target)
+      : call_target(call_target) {}
+
+  const CustomCallThunk::CustomCallTarget& call_target;
 };
 
 }  // namespace gpu

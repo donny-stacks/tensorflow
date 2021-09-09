@@ -437,7 +437,7 @@ void HloComputation::ComputeInstructionPostOrder(
     visited->insert({current, kVisiting});
 
     const auto get_channel_id =
-        [](HloInstruction* inst) -> absl::optional<int64> {
+        [](HloInstruction* inst) -> absl::optional<int64_t> {
       switch (inst->opcode()) {
         case HloOpcode::kRecvDone:
         case HloOpcode::kAllReduce:
@@ -495,6 +495,11 @@ void HloComputation::ComputeInstructionPostOrder(
 HloComputation::ChannelDependencyGroup
 HloComputation::ComputeChannelDependencies() const {
   ChannelDependencyGroup channel_dependency_group;
+  if (parent() && parent()->config().has_static_device_assignment() &&
+      (parent()->config().static_device_assignment().computation_count() == 1 ||
+       parent()->config().use_spmd_partitioning())) {
+    return channel_dependency_group;
+  }
   for (const auto& instruction : instructions_) {
     switch (instruction->opcode()) {
       case HloOpcode::kSend:
@@ -696,10 +701,10 @@ HloComputationProto HloComputation::ToProto() const {
 /* static */ StatusOr<std::unique_ptr<HloComputation>>
 HloComputation::CreateFromProto(
     const HloComputationProto& proto,
-    const absl::flat_hash_map<int64, HloComputation*>& computation_map,
+    const absl::flat_hash_map<int64_t, HloComputation*>& computation_map,
     bool prohibit_empty_literal) {
-  absl::flat_hash_map<int64, HloInstruction*> instruction_map;
-  absl::flat_hash_map<HloInstruction*, int64> to_proto_id;
+  absl::flat_hash_map<int64_t, HloInstruction*> instruction_map;
+  absl::flat_hash_map<HloInstruction*, int64_t> to_proto_id;
   std::vector<std::unique_ptr<HloInstruction>> instructions;
   int64_t parameter_count = 0;
   for (const HloInstructionProto& instruction_proto : proto.instructions()) {

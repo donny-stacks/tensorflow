@@ -28,7 +28,7 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "tensorflow/compiler/xla/statusor.h"
+#include "tensorflow/core/platform/statusor.h"
 
 namespace tensorflow {
 namespace kernel_gen {
@@ -39,13 +39,12 @@ StatusOr<mlir::OwningModuleRef> SetupContextAndParseModule(
     mlir::MLIRContext& context, llvm::StringRef tf_code);
 
 // Converts TF code to LLVM with or without GPU support.
-xla::StatusOr<mlir::OwningModuleRef> GenerateKernelForTfCode(
+StatusOr<mlir::OwningModuleRef> GenerateKernelForTfCode(
     mlir::MLIRContext& context, llvm::StringRef tf_code,
     llvm::ArrayRef<std::string> architectures,
     llvm::ArrayRef<int64_t> tile_sizes, llvm::ArrayRef<int64_t> unroll_factors,
-    int64_t max_supported_rank, bool embed_memref_prints = false,
-    bool print_ptx = false, bool print_llvmir = false, bool enable_ftz = false,
-    bool cpu_codegen = false, bool jit_compile = false);
+    int64_t max_supported_rank, bool embed_memref_prints, bool print_ptx,
+    bool print_llvmir, bool enable_ftz, bool cpu_codegen, bool jit_compile);
 
 }  // namespace kernel_gen
 }  // namespace tensorflow

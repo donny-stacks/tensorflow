@@ -17,13 +17,6 @@ limitations under the License.
 
 #include "tensorflow/core/runtime_fallback/runtime/runtime_fallback_tensor.h"
 
-#include "tfrt/host_context/async_value_ref.h"
-#include "tfrt/host_context/host_context.h"
-#include "tfrt/support/error_util.h"
-#include "tfrt/tensor/conversion_registry.h"
-#include "tfrt/tensor/dense_host_tensor.h"
-#include "tfrt/tensor/string_host_tensor.h"
-#include "tfrt/tensor/tensor_metadata.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 #include "tensorflow/c/tensor_interface.h"
@@ -36,8 +29,15 @@ limitations under the License.
 #include "tensorflow/core/runtime_fallback/util/tensor_util.h"
 #include "tensorflow/core/runtime_fallback/util/type_util.h"
 #include "tfrt/dtype/dtype.h"  // from @tf_runtime
+#include "tfrt/host_context/async_value_ref.h"  // from @tf_runtime
 #include "tfrt/host_context/host_buffer.h"  // from @tf_runtime
+#include "tfrt/host_context/host_context.h"  // from @tf_runtime
+#include "tfrt/support/error_util.h"  // from @tf_runtime
 #include "tfrt/support/ref_count.h"  // from @tf_runtime
+#include "tfrt/tensor/conversion_registry.h"  // from @tf_runtime
+#include "tfrt/tensor/dense_host_tensor.h"  // from @tf_runtime
+#include "tfrt/tensor/string_host_tensor.h"  // from @tf_runtime
+#include "tfrt/tensor/tensor_metadata.h"  // from @tf_runtime
 
 namespace tensorflow {
 namespace tfd {
@@ -63,9 +63,9 @@ RuntimeFallbackTensor::RuntimeFallbackTensor(const TensorShape& shape,
   assert(IsValid(dtype) && "Invalid dtype");
 }
 
-llvm::SmallVector<ssize_t, 4> GetShape(
+llvm::SmallVector<tfrt::Index, 4> GetShape(
     AbstractTensorInterface* tensor_interface) {
-  llvm::SmallVector<ssize_t, 4> dims;
+  llvm::SmallVector<tfrt::Index, 4> dims;
   int64_t num_dims = tensor_interface->NumDims();
   dims.reserve(num_dims);
   for (int i = 0; i < num_dims; ++i) {
@@ -105,7 +105,7 @@ void RuntimeFallbackTensor::Print(tfrt::raw_ostream& os) const {
 
   int rank = tensor_interface->NumDims();
 
-  llvm::SmallVector<ssize_t, 4> dims;
+  llvm::SmallVector<tfrt::Index, 4> dims;
   for (auto i = 0; i < rank; ++i) {
     dims.push_back(tensor_interface->Dim(i));
   }
@@ -152,7 +152,7 @@ CreateRuntimeFallbackTensorFromTfTensorHandle(OwnedTensorHandle owned_th,
     return tfrt::MakeStringError(tfrt::StrCat(
         "error getting rank from TF tensor handle: ", status.error_message()));
 
-  llvm::SmallVector<ssize_t, 4> dims;
+  llvm::SmallVector<tfrt::Index, 4> dims;
   for (auto i = 0; i < rank; ++i) {
     int64_t dim;
     status = owned_th->Dim(i, &dim);

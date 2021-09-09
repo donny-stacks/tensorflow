@@ -44,7 +44,7 @@ namespace tensorflow {
 namespace {
 
 // The test harness won't allow a mixture of fixture and non-fixture
-// tests in one file, so this is a trival fixture for tests that don't
+// tests in one file, so this is a trivial fixture for tests that don't
 // need the heavy-weight HierarchicalTreeBroadcasterTest fixture.
 class TrivialTest : public ::testing::Test {
  protected:
@@ -429,7 +429,7 @@ TEST_F(HierarchicalTreeBroadcasterInitParamsTest,
         RunTest<int32>(dtype, DEVICE_##T, W, D, L, A, F);                  \
       } break;                                                             \
       case DT_INT64: {                                                     \
-        RunTest<int64>(dtype, DEVICE_##T, W, D, L, A, F);                  \
+        RunTest<int64_t>(dtype, DEVICE_##T, W, D, L, A, F);                \
       } break;                                                             \
       default:                                                             \
         LOG(FATAL) << "Unimplemented";                                     \

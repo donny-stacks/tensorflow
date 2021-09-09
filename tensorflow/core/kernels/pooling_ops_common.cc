@@ -118,7 +118,7 @@ PoolParameters::PoolParameters(OpKernelContext* context,
                                const std::vector<int32>& ksize,
                                const std::vector<int32>& stride,
                                Padding padding,
-                               std::vector<int64> explicit_paddings,
+                               std::vector<int64_t> explicit_paddings,
                                TensorFormat data_format,
                                const TensorShape& tensor_in_shape) {
   // For maxpooling, tensor_in should have 2 spatial dimensions.
@@ -171,6 +171,8 @@ PoolParameters::PoolParameters(OpKernelContext* context,
     pad_depth = 0;
     out_depth = depth;
   } else {
+    OP_REQUIRES(context, depth_window > 0,
+                errors::InvalidArgument("depth_window must not be 0"));
     // Our current version of depthwise max pooling does not support
     // any padding, and expects the depth_window to equal the
     // depth_stride (no overlapping).
@@ -215,7 +217,7 @@ void DnnPoolingOp<T>::Compute(OpKernelContext* context,
                               se::dnn::PoolingMode pooling_mode,
                               const std::vector<int32>& size,
                               const std::vector<int32>& stride, Padding padding,
-                              std::vector<int64> explicit_paddings,
+                              std::vector<int64_t> explicit_paddings,
                               TensorFormat data_format, const Tensor& tensor_in,
                               const TensorShape& tensor_out_shape,
                               bool propagate_nans) {
@@ -442,7 +444,7 @@ template <typename T>
 void DnnPoolingGradOp<T>::Compute(
     OpKernelContext* context, se::dnn::PoolingMode pooling_mode,
     const std::vector<int32>& size, const std::vector<int32>& stride,
-    Padding padding, std::vector<int64> explicit_paddings,
+    Padding padding, std::vector<int64_t> explicit_paddings,
     TensorFormat data_format, const Tensor* tensor_in, const Tensor* tensor_out,
     const Tensor& out_backprop, const TensorShape& tensor_in_shape,
     bool propagate_nans) {

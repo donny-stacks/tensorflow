@@ -48,13 +48,19 @@ void populateExtraBufferizePatterns(MLIRContext *context,
                                     BufferizeTypeConverter *converter,
                                     RewritePatternSet *patterns);
 
+/// Populate pattern to bufferize `linalg.tiled_loop`.
+void populateTiledLoopBufferizePattern(MLIRContext *context,
+                                       BufferizeTypeConverter *converter,
+                                       RewritePatternSet *patterns);
+
 /// Populate patterns to rewrite TF operations to TF framework JIT invocations.
 void PopulateTFToJITInvocationPatterns(MLIRContext *ctx,
                                        RewritePatternSet *patterns,
+                                       llvm::ArrayRef<StringRef> architectures,
                                        llvm::ArrayRef<int64_t> tile_sizes,
                                        llvm::ArrayRef<int64_t> unroll_factors,
                                        int64_t max_supported_rank,
-                                       bool cpu_codegen);
+                                       bool enable_ftz, bool cpu_codegen);
 
 }  // namespace transforms
 }  // namespace kernel_gen

@@ -91,6 +91,7 @@ FRAMEWORK_LIB_HDRS = STABLE_FRAMEWORK_LIB_HDRS + [
     "core/subgraph.h",
     "graph_info.h",
     "optional_debug_tools.h",
+    "signature_runner.h",
 ]
 
 exports_files(
@@ -156,7 +157,6 @@ cc_library(
     deps = [
         ":graph_info",
         ":memory_planner",
-        ":simple_memory_arena",
         ":util",
         "//tensorflow/lite/c:common",
     ],
@@ -219,7 +219,21 @@ cc_library(
     hdrs = ["simple_memory_arena.h"],
     compatible_with = get_compatible_with_portable(),
     copts = tflite_copts_warnings(),
-    deps = ["//tensorflow/lite/c:common"],
+    deps = [
+        ":macros",
+        "//tensorflow/lite/c:common",
+    ],
+)
+
+cc_library(
+    name = "simple_memory_arena_debug_dump",
+    srcs = ["simple_memory_arena_debug_dump.cc"],
+    compatible_with = get_compatible_with_portable(),
+    copts = tflite_copts_warnings(),
+    deps = [
+        ":simple_memory_arena",
+    ],
+    alwayslink = 1,
 )
 
 cc_library(
@@ -420,6 +434,7 @@ cc_library(
         "core/subgraph.h",
         "interpreter.cc",
         "interpreter_builder.cc",
+        "signature_runner.h",
     ],
     hdrs = [
         "interpreter.h",
@@ -428,7 +443,28 @@ cc_library(
         "model_builder.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    copts = tflite_copts() + tflite_copts_warnings(),
+    copts = tflite_copts() + tflite_copts_warnings() +
+            # As xnn_enable_qs8_explicit_true and xnn_enable_qu8_explicit_true
+            # could be specified simultaneously, use two selects here.
+            select({
+                "@XNNPACK//:xnn_enable_qs8_explicit_false": [],
+                "@XNNPACK//:xnn_enable_qs8_explicit_true": [
+                    "-DTFLITE_ALWAYS_CREATE_LAZY_DELEGATE_PROVIDERS",
+                ],
+                "//tensorflow:emscripten": [
+                    "-DTFLITE_ALWAYS_CREATE_LAZY_DELEGATE_PROVIDERS",
+                ],
+                "//conditions:default": [],
+            }) + select({
+        "@XNNPACK//:xnn_enable_qu8_explicit_false": [],
+        "@XNNPACK//:xnn_enable_qu8_explicit_true": [
+            "-DTFLITE_ALWAYS_CREATE_LAZY_DELEGATE_PROVIDERS",
+        ],
+        "//tensorflow:emscripten": [
+            "-DTFLITE_ALWAYS_CREATE_LAZY_DELEGATE_PROVIDERS",
+        ],
+        "//conditions:default": [],
+    }),
     visibility = [
         "//tensorflow/lite/core/shims:__subpackages__",
         "//tensorflow/lite/delegates/flex:__subpackages__",
@@ -480,6 +516,7 @@ cc_library(
         "graph_info.cc",
         "interpreter_builder_experimental.cc",
         "interpreter_experimental.cc",
+        "signature_runner.cc",
     ],
     hdrs = [
         "core/subgraph.h",
@@ -488,6 +525,7 @@ cc_library(
         "interpreter_builder.h",
         "model.h",
         "model_builder.h",
+        "signature_runner.h",
     ],
     compatible_with = get_compatible_with_portable(),
     copts = tflite_copts() + tflite_copts_warnings(),
@@ -668,9 +706,13 @@ cc_library(
     # configuration conditions will make TFLite interpreter to apply XNNPACK
     # delegate by default.
     deps = select({
+        "//tensorflow:android_arm64": [":tflite_with_xnnpack_enabled"],
+        "//tensorflow:android_arm": [":tflite_with_xnnpack_enabled"],
         # XNNPACK delivers significant benefits w/ WASM and is already in use
         # by most WASM clients.
         "//tensorflow:emscripten": [":tflite_with_xnnpack_enabled"],
+        "//tensorflow:ios": [":tflite_with_xnnpack_enabled"],
+        "//tensorflow:ios_x86_64": [],
         "//tensorflow:macos": [],
         "//tensorflow:windows": [":tflite_with_xnnpack_enabled"],
         "//conditions:default": [],
@@ -758,12 +800,31 @@ cc_test(
         ":string",
         ":string_util",
         ":util",
+        "//tensorflow/lite/c:c_api_types",
         "//tensorflow/lite/c:common",
+        "//tensorflow/lite/delegates/utils:simple_delegate",
         "//tensorflow/lite/kernels:builtin_ops",
         "//tensorflow/lite/kernels:kernel_util",
         "//tensorflow/lite/kernels/internal:compatibility",
         "//tensorflow/lite/testing:util",
         "//third_party/eigen3",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# Test signature runner.
+cc_test(
+    name = "signature_runner_test",
+    size = "small",
+    srcs = ["signature_runner_test.cc"],
+    data = [
+        "testdata/multi_signatures.bin",
+    ],
+    deps = [
+        ":framework",
+        "//tensorflow/lite/kernels:builtin_ops",
+        "//tensorflow/lite/schema:schema_fbs",
+        "//tensorflow/lite/testing:util",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -817,6 +878,7 @@ cc_test(
         "testdata/while_op_with_forwarding_input.bin",
     ],
     tags = [
+        "no_windows",  # TODO(b/194459105): the test is flaky.
         "tflite_not_portable",
         "tflite_smoke_test",
     ],
@@ -845,7 +907,7 @@ tf_cc_test(
     ],
     tags = [
         "no_gpu",  # GPU + flex is not officially supported.
-        "no_windows",  # TODO(b/116667551): No weak symbols with MSVC.
+        "no_windows",  # No weak symbols with MSVC.
         "tflite_not_portable_android",
         "tflite_not_portable_ios",
     ],
@@ -870,7 +932,7 @@ cc_test(
         "testdata/multi_add.bin",
     ],
     tags = [
-        "no_windows",  # No weak symbols with MSVC.
+        "no_windows",  # TODO(b/194459105): the test is flaky.
         "tflite_not_portable_android",
         "tflite_not_portable_ios",
         "tflite_smoke_test",

@@ -61,6 +61,15 @@ CreateRemoveTfIfConstArgsPass();
 // operands.
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> CreateMergeTfIfOpsPass();
 
+// Create a pass to deduplicate the function invoked by tf.BatchFunction with
+// the same shared_name.
+std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
+CreateDeduplicateFunctionsInovkedByBatchFunctionPass();
+
+// Create a pass to fuse the TPU Ops for TFRT.
+std::unique_ptr<mlir::OperationPass<mlir::FuncOp>>
+CreateFuseTpuCompileAndExecutePass();
+
 }  // namespace tfrt_compiler
 
 class CoreRTConverter;
@@ -121,20 +130,29 @@ struct TfrtPipelineOptions
       *this, "skip-fold-transpose-in-ops",
       llvm::cl::desc("Skip folding transpose operands in Ops which can support "
                      "different layouts.")};
-  Option<bool> target_tpu{*this, "target-tpu",
-                          llvm::cl::desc("target TPU programs if true"),
-                          llvm::cl::init(false)};
+  Option<bool> target_tpurt{*this, "target-tpurt",
+                            llvm::cl::desc("target TPURT dialect if true"),
+                            llvm::cl::init(false)};
   Option<bool> tpu_use_core_selector{
       *this, "tpu-use-core-selector",
       llvm::cl::desc("If true, use ServingCoreSelector to pick TPU core. "
                      "Otherwise, use the assigned core. Currently we use "
                      "core selector for Servo serving use cases."),
       llvm::cl::init(true)};
+  Option<bool> tpu_use_bundled_transfer{
+      *this, "tpu-use-bundled-transfer",
+      llvm::cl::desc("If true, use BundledTransferToTpuOp to transfer "
+                     "variables and input tensors to TPU."),
+      llvm::cl::init(true)};
   Option<bool> tpu_lower_to_fallback{
       *this, "tpu-lower-to-fallback",
       llvm::cl::desc("If true, lower an TF op that's placed on TPU device "
                      "to be executed by tfrt_fallback.execute."),
       llvm::cl::init(true)};
+  Option<bool> tpu_fuse_ops{
+      *this, "tpu-fuse-ops",
+      llvm::cl::desc("If true, use the TPU fused compile_and_execute kernel"),
+      llvm::cl::init(false)};
   // TODO(b/194081364): remove this option once we unify servo TPU serving
   // result transfer behavior.
   Option<bool> tpu_transfer_result_to_host{
@@ -190,8 +208,9 @@ struct TfrtPipelineOptions
   ListOption<std::string> auto_fusion_oplist{
       *this, "auto-fusion-oplist",
       llvm::cl::desc("A list of Tensorflow operations to cluster together for "
-                     "JIT compilation. Use 'all' to enable clustering for all "
-                     "operations supported by the clustering policy."),
+                     "JIT compilation. Alternatively use 'tier1', ..., 'all' "
+                     "to allow clustering for all operations included in the "
+                     "given clustering tier."),
       llvm::cl::MiscFlags::CommaSeparated};
 
   Option<int> auto_fusion_min_cluster_size{

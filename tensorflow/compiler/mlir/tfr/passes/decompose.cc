@@ -199,6 +199,13 @@ LogicalResult DecomposeTFOpsPass::RewriteUnregisteredTFOps() {
           attribute =
               compose_func.getArgAttr(arg.index(), kAttrArgumentDefaultAttr);
         }
+        if (!attribute && attr_name.getValue() == "out_type") {
+          auto type = op->getResult(0).getType();
+          if (type.isa<TensorType>()) {
+            type = type.cast<TensorType>().getElementType();
+          }
+          attribute = TypeAttr::get(type);
+        }
         Value attr_cst;
         // Wrap these special attributes as a special TFR constant, so the SSA
         // value has a valid type to be used as TFR function argument. These
@@ -218,7 +225,8 @@ LogicalResult DecomposeTFOpsPass::RewriteUnregisteredTFOps() {
     // Create the TFR call op
     auto new_op = builder.create<CallOp>(
         op->getLoc(), compose_func_type.getResults(),
-        builder.getSymbolRefAttr(compose_func.getName()), new_operands);
+        SymbolRefAttr::get(builder.getContext(), compose_func.getName()),
+        new_operands);
 
     // Replace the use of the old op. This is mapping the results from the
     // target TF ops to the TFR function returns. If the TFR function return is

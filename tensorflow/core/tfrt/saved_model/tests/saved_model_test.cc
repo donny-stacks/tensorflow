@@ -31,7 +31,6 @@ struct TestParams {
   bool enable_native_ops = false;
   bool enable_grappler = false;
   bool enable_lazy_loading = false;
-  bool force_bef_function_async = false;
 };
 
 class SavedModelTest : public testing::TestWithParam<TestParams> {};
@@ -63,7 +62,6 @@ TEST_P(SavedModelTest, BasicV1) {
       CreateTfTensor<int32_t>(/*shape=*/{1, 3}, /*data=*/{1, 1, 1}));
 
   tfrt::SavedModel::RunOptions run_options;
-  run_options.force_bef_function_async = GetParam().force_bef_function_async;
 
   std::vector<tensorflow::Tensor> outputs;
   TF_ASSERT_OK(saved_model->Run(run_options, "toy", inputs, &outputs));
@@ -75,16 +73,14 @@ TEST_P(SavedModelTest, BasicV1) {
 
 // Tests all the value combinations of `TestParams`. For readability, use
 // integers instead of booleans.
-INSTANTIATE_TEST_SUITE_P(SavedModelLiteTest, SavedModelTest,
-                         testing::Values(
-                             // The values below are for:
-                             // enable_native_ops, enable_grappler,
-                             // enable_lazy_loading, force_bef_function_async
-                             TestParams{0, 0, 0}, TestParams{0, 0, 0, 1},
-                             TestParams{0, 0, 1}, TestParams{0, 1, 0},
-                             TestParams{0, 1, 1}, TestParams{1, 0, 0},
-                             TestParams{1, 0, 1}, TestParams{1, 1, 0},
-                             TestParams{1, 1, 1}, TestParams{1, 1, 1, 1}));
+INSTANTIATE_TEST_SUITE_P(
+    SavedModelLiteTest, SavedModelTest,
+    testing::Values(
+        // The values below are for:
+        // enable_native_ops, enable_grappler, enable_lazy_loading
+        TestParams{0, 0, 0}, TestParams{0, 0, 1}, TestParams{0, 1, 0},
+        TestParams{0, 1, 1}, TestParams{1, 0, 0}, TestParams{1, 0, 1},
+        TestParams{1, 1, 0}, TestParams{1, 1, 1}));
 
 TEST(SavedModelTest, BasicV2) {
   // SavedModel toy contains a graph of a single 'tf.AddV2' op. It is generated
@@ -407,6 +403,29 @@ TEST_F(SavedModelRunByTensorNamesTest, NoOutputNodes) {
       /*run_options=*/{}, inputs_, /*output_tensor_names=*/{},
       target_node_names_, &outputs));
   ASSERT_EQ(outputs.size(), 0);
+}
+
+TEST_F(SavedModelRunByTensorNamesTest, ShuffleInputsAndOutputs) {
+  std::vector<std::pair<std::string, tensorflow::Tensor>> inputs = {
+      {"input2", CreateTfTensor<int32_t>(/*shape=*/{1, 3}, /*data=*/{4, 4, 4})},
+      {"input1", CreateTfTensor<int32_t>(/*shape=*/{1, 3}, /*data=*/{1, 1, 1})},
+      {"input3", CreateTfTensor<int32_t>(/*shape=*/{1, 3}, /*data=*/{3, 3, 3})},
+  };
+  std::vector<std::string> output_tensor_names{"result22", "result1",
+                                               "result31"};
+
+  std::vector<tensorflow::Tensor> outputs;
+  TF_ASSERT_OK(saved_model_->RunByTensorNames(
+      /*run_options=*/{}, inputs, output_tensor_names, {}, &outputs));
+
+  ASSERT_EQ(outputs.size(), 3);
+
+  // Check output "r22".
+  EXPECT_THAT(GetTfTensorData<int32_t>(outputs[0]), testing::ElementsAre(30));
+  // Check output "r1".
+  EXPECT_THAT(GetTfTensorData<int32_t>(outputs[1]), testing::ElementsAre(6));
+  // Check output "r31".
+  EXPECT_THAT(GetTfTensorData<int32_t>(outputs[2]), testing::ElementsAre(18));
 }
 
 TEST(SavedModelTest, CustomWorkQueue) {
@@ -815,13 +834,3 @@ TEST(SavedModelTest, DeadlineExceeded) {
 }  // namespace
 }  // namespace saved_model_test
 }  // namespace tfrt
-
-int main(int argc, char** argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-
-  absl::SetFlag(&FLAGS_tfrt_default_device,
-                "/job:localhost/replica:0/task:0/device:CPU:0");
-  absl::SetFlag(&FLAGS_tfrt_num_threads, 1);
-
-  return RUN_ALL_TESTS();
-}

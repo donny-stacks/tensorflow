@@ -310,7 +310,7 @@ TfLiteStatus Interpreter::SetNumThreads(int num_threads) {
 }
 
 TfLiteStatus Interpreter::ApplyLazyDelegateProviders() {
-  if (lazy_delegate_providers_.empty()) return kTfLiteOk;
+  if (lazy_delegate_providers_.empty() || IsFullyDelegated()) return kTfLiteOk;
 
   // We only apply lazy delegate providers once.
   std::vector<TfLiteDelegatePtr> delegate_providers;
@@ -326,10 +326,15 @@ TfLiteStatus Interpreter::ApplyLazyDelegateProviders() {
     auto status = ModifyGraphWithDelegate(std::move(delegate_providers[i]));
     switch (status) {
       case kTfLiteOk:
-        TFLITE_LOG(TFLITE_LOG_INFO,
-                   "Successfully applied the default TensorFlow Lite "
-                   "delegate indexed at %zu.",
-                   i);
+        TFLITE_LOG(
+            TFLITE_LOG_INFO,
+            "Successfully applied the default TensorFlow Lite "
+            "delegate indexed at %zu.\n *NOTE*: because a delegate has been "
+            "applied, the precision of computations should be unchanged, but "
+            "the exact output tensor values may have changed. If such output "
+            "values are checked in your code, like in your tests etc., please "
+            "consider increasing error tolerance for the check.",
+            i);
         break;
       case kTfLiteError:
         TF_LITE_REPORT_ERROR(error_reporter_,
@@ -359,6 +364,30 @@ TfLiteStatus Interpreter::ApplyLazyDelegateProviders() {
     }
   }
   return kTfLiteOk;
+}
+
+SignatureRunner* Interpreter::GetSignatureRunner(const char* signature_key) {
+  auto iter = signature_runner_map_.find(signature_key);
+  if (iter != signature_runner_map_.end()) {
+    return &(iter->second);
+  }
+
+  // Default delegates are applied once for all subgraphs. Only returns error
+  // when the status is kTfLiteError. For other statuses, it will fall back to
+  // the default implementation.
+  if (ApplyLazyDelegateProviders() == kTfLiteError) {
+    return nullptr;
+  }
+
+  for (const auto& signature : signature_defs_) {
+    if (signature.signature_key == signature_key) {
+      auto status = signature_runner_map_.insert(
+          {signature_key,
+           SignatureRunner(&signature, subgraph(signature.subgraph_index))});
+      return &(status.first->second);
+    }
+  }
+  return nullptr;
 }
 
 TfLiteStatus Interpreter::SetMetadata(

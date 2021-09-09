@@ -1,6 +1,8 @@
-// RUN: kernel-gen-opt %s --computeop-and-func-bufferize --final-bufferize | FileCheck %s --check-prefixes=CHECK,ALLOC
-// RUN: kernel-gen-opt %s --computeop-and-func-bufferize --final-bufferize --promote-buffers-to-stack | FileCheck %s  --check-prefixes=CHECK,ALLOCA
-
+// RUN: kernel-gen-opt %s --computeop-and-func-bufferize --final-bufferize \
+// RUN:   --split-input-file | FileCheck %s --check-prefixes=CHECK,ALLOC
+// RUN: kernel-gen-opt %s --computeop-and-func-bufferize --final-bufferize \
+// RUN:  --promote-buffers-to-stack --split-input-file |\
+// RUN:  FileCheck %s  --check-prefixes=CHECK,ALLOCA
 
 // CHECK-LABEL: @tensor.extract
 // CHECK-SAME: (%[[ARG:.*]]: memref<?xf32>) -> f32

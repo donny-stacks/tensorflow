@@ -75,6 +75,7 @@ limitations under the License.
 // The implementation below is at the top level instead of the
 // brain namespace because we are defining 'extern "C"' functions.
 using tensorflow::AllocationDescription;
+using tensorflow::AttrValueMap;
 using tensorflow::DataType;
 using tensorflow::ExtendSessionGraphHelper;
 using tensorflow::Graph;
@@ -103,6 +104,7 @@ using tensorflow::TensorShapeProto;
 using tensorflow::VersionDef;
 using tensorflow::errors::FailedPrecondition;
 using tensorflow::errors::InvalidArgument;
+using tensorflow::errors::OutOfRange;
 using tensorflow::gtl::ArraySlice;
 using tensorflow::strings::StrCat;
 
@@ -414,14 +416,12 @@ static TF_Tensor* EmptyTensor(TF_DataType dtype,
                               const tensorflow::TensorShape& shape) {
   static char empty;
   int64_t nelems = 1;
-  std::vector<tensorflow::int64> dims;
+  std::vector<int64_t> dims;
   for (int i = 0; i < shape.dims(); ++i) {
     dims.push_back(shape.dim_size(i));
     nelems *= shape.dim_size(i);
   }
   CHECK_EQ(nelems, 0);
-  static_assert(sizeof(int64_t) == sizeof(tensorflow::int64),
-                "64-bit int types should match in size");
   return TF_NewTensor(
       dtype, reinterpret_cast<const int64_t*>(dims.data()), shape.dims(),
       reinterpret_cast<void*>(&empty), 0, [](void*, size_t, void*) {}, nullptr);
@@ -861,19 +861,14 @@ void TF_SetAttrStringList(TF_OperationDescription* desc, const char* attr_name,
 
 void TF_SetAttrInt(TF_OperationDescription* desc, const char* attr_name,
                    int64_t value) {
-  static_assert(sizeof(int64_t) == sizeof(tensorflow::int64),
-                "64-bit int types should match in size");
-  desc->node_builder.Attr(attr_name, static_cast<tensorflow::int64>(value));
+  desc->node_builder.Attr(attr_name, static_cast<int64_t>(value));
 }
 
 void TF_SetAttrIntList(TF_OperationDescription* desc, const char* attr_name,
                        const int64_t* values, int num_values) {
-  static_assert(sizeof(int64_t) == sizeof(tensorflow::int64),
-                "64-bit int types should match in size");
   desc->node_builder.Attr(
-      attr_name,
-      ArraySlice<const tensorflow::int64>(
-          reinterpret_cast<const tensorflow::int64*>(values), num_values));
+      attr_name, ArraySlice<const int64_t>(
+                     reinterpret_cast<const int64_t*>(values), num_values));
 }
 
 void TF_SetAttrFloat(TF_OperationDescription* desc, const char* attr_name,
@@ -932,10 +927,8 @@ void TF_SetAttrShape(TF_OperationDescription* desc, const char* attr_name,
                      const int64_t* dims, int num_dims) {
   PartialTensorShape shape;
   if (num_dims >= 0) {
-    static_assert(sizeof(int64_t) == sizeof(tensorflow::int64),
-                  "64-bit int types should match in size");
-    shape = PartialTensorShape(ArraySlice<tensorflow::int64>(
-        reinterpret_cast<const tensorflow::int64*>(dims), num_dims));
+    shape = PartialTensorShape(
+        ArraySlice<int64_t>(reinterpret_cast<const int64_t*>(dims), num_dims));
   }
   desc->node_builder.Attr(attr_name, shape);
 }
@@ -949,10 +942,8 @@ void TF_SetAttrShapeList(TF_OperationDescription* desc, const char* attr_name,
     if (num_dims[i] < 0) {
       shapes.emplace_back();
     } else {
-      static_assert(sizeof(int64_t) == sizeof(tensorflow::int64),
-                    "64-bit int types should match in size");
-      shapes.emplace_back(ArraySlice<tensorflow::int64>(
-          reinterpret_cast<const tensorflow::int64*>(dims[i]), num_dims[i]));
+      shapes.emplace_back(ArraySlice<int64_t>(
+          reinterpret_cast<const int64_t*>(dims[i]), num_dims[i]));
     }
   }
   desc->node_builder.Attr(attr_name, shapes);
@@ -1538,6 +1529,40 @@ void TF_OperationGetAttrValueProto(TF_Operation* oper, const char* attr_name,
   const auto* attr = GetAttrValue(oper, attr_name, status);
   if (!status->status.ok()) return;
   status->status = MessageToBuffer(*attr, output_attr_value);
+}
+
+int TF_OperationGetNumAttrs(TF_Operation* oper) {
+  return oper->node.attrs().size();
+}
+
+int TF_OperationGetAttrNameLength(TF_Operation* oper, int i) {
+  auto attrs = oper->node.attrs();
+  int count = 0;
+  AttrValueMap::const_iterator it;
+  for (it = attrs.begin(); it != attrs.end(); it++) {
+    if (count == i) {
+      return it->first.length();
+    }
+    count++;
+  }
+  return -1;
+}
+
+void TF_OperationGetAttrName(TF_Operation* oper, int i, char* output,
+                             TF_Status* status) {
+  auto attrs = oper->node.attrs();
+  int count = 0;
+  AttrValueMap::const_iterator it;
+  for (it = attrs.begin(); it != attrs.end(); it++) {
+    if (count == i) {
+      strncpy(output, it->first.c_str(), it->first.length());
+      status->status = Status::OK();
+      return;
+    }
+    count++;
+  }
+  status->status = OutOfRange("Operation only has ", count,
+                              " attributes, can't get the ", i, "th");
 }
 
 void TF_OperationToNodeDef(TF_Operation* oper, TF_Buffer* output_node_def,

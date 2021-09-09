@@ -42,6 +42,11 @@ class HasRankAtMost<int n> : Constraint<
     CPred<"$0.getType().cast<ShapedType>().hasRank() && "
           "$0.getType().cast<ShapedType>().getRank() <= " # n>>;
 
+// Checks if the value has rank 'n'.
+class HasRank<int n> : Constraint<
+    CPred<"$0.getType().cast<ShapedType>().hasRank() && "
+          "$0.getType().cast<ShapedType>().getRank() == " # n>>;
+
 //===----------------------------------------------------------------------===//
 // Ternary ops patterns.
 //===----------------------------------------------------------------------===//
@@ -119,6 +124,7 @@ multiclass FuseBinaryOpToPrecedingAffine<Op binaryOp> {
       $h_factor, $w_factor, $act_fn, $padding, $stride_h, $stride_w,
       $multiplier),
     [(CanFuseConvOrDepthwiseConv<"true"> $filter, $value),
+     (HasRank<1> $value),
      (HasOneUse $output)]>;
    def FuseBinaryOpWithTransposeConv#binaryOp : Pat<
     (binaryOp (TFL_TransposeConvOp:$output $output_shape, $weights, $inputs,
@@ -178,6 +184,7 @@ multiclass FuseMulOrDivWithConv2dOrDepthwiseConv2d<Op BinaryOp> {
       $h_factor, $w_factor, $act_fn, $padding, $stride_h,
       $stride_w, $multiplier),
     [(CanFuseConvOrDepthwiseConv<"true"> $filter, $value),
+     (HasRank<1> $value),
      (HasOneUse $output)]>;
   def FuseMulOrDivWithConv#BinaryOp : Pat<
     (BinaryOp (TFL_Conv2DOp:$conv_output $input,
@@ -242,13 +249,6 @@ def eliminate_dq_q_pairs : Pat<
   (TFL_QuantizeOp (TFL_DequantizeOp $in), $qt),
   (replaceWithValue $in),
   [(NotFromQuantOpOrSameQuantType $in, $qt)]>;
-
-
-
-
-// Checks if the operand has rank == n
-class OperandHasRank<int n> : Constraint<
-  CPred<"$0.getType().cast<ShapedType>().getRank() == " # n>>;
 
 // Matching HardSwish
 def MatchHardSwishPattern1 : Pat<
@@ -470,7 +470,8 @@ foreach BinaryOp = [TFL_AddOp, TFL_SubOp, TFL_DivOp, TFL_MulOp] in {
      (IsTailOfShape $rhs, $input),
      (HasRankAtMost<4> $input),
      (HasRankAtMost<4> $lhs),
-     (HasRankAtMost<4> $rhs)]>;
+     (HasRankAtMost<4> $rhs),
+     (SameElementType $input, $rhs)]>;
 
     // Move binary op before reshape:
     // binary(reshape(lhs), reshape(rhs)) => reshape(binary(lhs, rhs))
@@ -484,7 +485,8 @@ foreach BinaryOp = [TFL_AddOp, TFL_SubOp, TFL_DivOp, TFL_MulOp] in {
       [(IsTailOfShape $rhs, $lhs),
        (IsTailOfShape $lhs, $rhs),
        (IsTailOfShape $input1, $input2),
-       (IsTailOfShape $input2, $input1)]>;
+       (IsTailOfShape $input2, $input1),
+       (SameElementType $input1, $input2)]>;
 
     // Move binary op before reshape:
     // binary(reshape(lhs), rhs) => reshape(binary(lhs, flatten(rhs)))
@@ -539,7 +541,8 @@ foreach BinaryOp = [TFL_FloorDivOp, TFL_FloorModOp, TFL_MinimumOp,
      (IsTailOfShape $rhs, $input),
      (HasRankAtMost<4> $input),
      (HasRankAtMost<4> $lhs),
-     (HasRankAtMost<4> $rhs)]>;
+     (HasRankAtMost<4> $rhs),
+     (SameElementType $input, $rhs)]>;
 
     // Move binary op before reshape:
     // binary(reshape(lhs), reshape(rhs)) => reshape(binary(lhs, rhs))
@@ -552,7 +555,8 @@ foreach BinaryOp = [TFL_FloorDivOp, TFL_FloorModOp, TFL_MinimumOp,
       [(IsTailOfShape $rhs, $lhs),
        (IsTailOfShape $lhs, $rhs),
        (IsTailOfShape $input1, $input2),
-       (IsTailOfShape $input2, $input1)]>;
+       (IsTailOfShape $input2, $input1),
+       (SameElementType $input1, $input2)]>;
 
     // Move binary op before reshape:
     // binary(reshape(lhs), rhs) => reshape(binary(lhs, flatten(rhs)))
@@ -965,5 +969,5 @@ def ReplaceOneHotFullyConnectedWithLookup : Pat<
       $filter,
       (ConstantOp ConstantAttr<RankedI32ElementsAttr<[2]>, "{1,0}"> ))),
   [(I32ElementsVal $indices),     // lookup is not implemented for i64
-   (OperandHasRank<1> $indices),  // lookup isn't implemented for any other rank
+   (HasRank<1> $indices),  // lookup isn't implemented for any other rank
    (IsNoneType $bias)]>;          // Maybe folded into the lookup matrix later

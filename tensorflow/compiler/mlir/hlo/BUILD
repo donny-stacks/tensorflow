@@ -14,7 +14,6 @@ package(
 
 package_group(
     name = "friends",
-    includes = ["@llvm-project//mlir:subpackages"],
     packages = [
         "//babelfish/device/...",
         "//learning/brain/experimental/dtensor/...",
@@ -23,7 +22,9 @@ package_group(
         "//learning/brain/google/xla/mlir/...",
         "//learning/deepmind/partir/...",
         "//learning/pathways/data_parallel/tf2xla/...",
+        "//platforms/darwinn/tools/mlir_fuzzer/...",
         "//platforms/xla/...",
+        "//third_party/auroraml/...",
         "//third_party/iree/...",
         "//third_party/mlir_edge/...",
         "//third_party/py/mlir/...",
@@ -36,30 +37,34 @@ package_group(
 )
 
 exports_files([
+    "include/mlir-hlo/Dialect/mhlo/IR/clo_ops.td",
     "include/mlir-hlo/Dialect/mhlo/IR/hlo_ops.td",
     "include/mlir-hlo/Dialect/mhlo/IR/lhlo_ops.td",
 ])
 
+# Python extension sources.
+exports_files(["python/MlirHloModule.cpp"])
+
+filegroup(
+    name = "hlo_ops_td_filegroup",
+    srcs = glob(["include/mlir-hlo/Dialect/mhlo/IR/*.td"]),
+)
+
 td_library(
     name = "hlo_ops_td_files",
-    srcs = glob(["include/mlir-hlo/Dialect/mhlo/IR/*.td"]) + [
-        # TODO(gcmn): These should be encapsulate in a td_library.
-        "@llvm-project//mlir:include/mlir/Interfaces/ControlFlowInterfaces.td",
-        "@llvm-project//mlir:include/mlir/Interfaces/CopyOpInterface.td",
-        "@llvm-project//mlir:include/mlir/Interfaces/InferTypeOpInterface.td",
-        "@llvm-project//mlir:include/mlir/Interfaces/LoopLikeInterface.td",
-        "@llvm-project//mlir:include/mlir/Interfaces/ViewLikeInterface.td",
-        "@llvm-project//mlir:include/mlir/Dialect/Shape/IR/ShapeBase.td",
-        "@llvm-project//mlir:include/mlir/Dialect/Shape/IR/ShapeOps.td",
-    ],
+    srcs = glob(["include/mlir-hlo/Dialect/mhlo/IR/*.td"]),
     compatible_with = get_compatible_with_cloud(),
     includes = ["include"],
     deps = [
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
+        "@llvm-project//mlir:CopyOpInterfaceTdFiles",
+        "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
         "@llvm-project//mlir:LoopLikeInterfaceTdFiles",
         "@llvm-project//mlir:MemRefOpsTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
+        "@llvm-project//mlir:ShapeOpsTdFiles",
         "@llvm-project//mlir:SideEffectTdFiles",
+        "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
     ],
 )
 
@@ -402,35 +407,35 @@ gentbl_cc_library(
 )
 
 gentbl_cc_library(
-    name = "infer_fusibility_op_interface_gen",
+    name = "infer_shape_equality_op_interface_gen",
     compatible_with = get_compatible_with_cloud(),
     tbl_outs = [
         (
             ["-gen-op-interface-decls"],
-            "include/mlir-hlo/Dialect/mhlo/IR/infer_fusibility_op_interface.h.inc",
+            "include/mlir-hlo/Dialect/mhlo/IR/infer_shape_equality_op_interface.h.inc",
         ),
         (
             ["-gen-op-interface-defs"],
-            "include/mlir-hlo/Dialect/mhlo/IR/infer_fusibility_op_interface.cpp.inc",
+            "include/mlir-hlo/Dialect/mhlo/IR/infer_shape_equality_op_interface.cpp.inc",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "include/mlir-hlo/Dialect/mhlo/IR/infer_fusibility_op_interface.td",
+    td_file = "include/mlir-hlo/Dialect/mhlo/IR/infer_shape_equality_op_interface.td",
     deps = [":hlo_ops_td_files"],
 )
 
 cc_library(
-    name = "infer_fusibility_op_interface",
+    name = "infer_shape_equality_op_interface",
     srcs = [
-        "lib/Dialect/mhlo/IR/infer_fusibility_op_interface.cc",
+        "lib/Dialect/mhlo/IR/infer_shape_equality_op_interface.cc",
     ],
     hdrs = [
-        "include/mlir-hlo/Dialect/mhlo/IR/infer_fusibility_op_interface.h",
-        "include/mlir-hlo/Dialect/mhlo/IR/infer_fusibility_op_interface.h.inc",
+        "include/mlir-hlo/Dialect/mhlo/IR/infer_shape_equality_op_interface.h",
+        "include/mlir-hlo/Dialect/mhlo/IR/infer_shape_equality_op_interface.h.inc",
     ],
     includes = ["include"],
     deps = [
-        ":infer_fusibility_op_interface_gen",
+        ":infer_shape_equality_op_interface_gen",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
     ],
@@ -502,6 +507,7 @@ cc_library(
     deps = [
         ":hlo_ops_base_enums_inc_gen",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -543,7 +549,7 @@ cc_library(
         ":hlo_ops_common",
         ":hlo_ops_inc_gen",
         ":hlo_ops_pattern_gen",
-        ":infer_fusibility_op_interface",
+        ":infer_shape_equality_op_interface",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Analysis",
         "@llvm-project//mlir:ControlFlowInterfaces",
@@ -616,7 +622,7 @@ cc_library(
         ":hlo_ops_base_enums",
         ":hlo_ops_base_structs",
         ":hlo_ops_common",
-        ":infer_fusibility_op_interface",
+        ":infer_shape_equality_op_interface",
         ":lhlo",
         ":lhlo_gpu_ops_enums",
         ":lhlo_gpu_ops_inc_gen",
@@ -966,7 +972,6 @@ cc_library(
         ":hlo",
         ":lhlo",
         ":map_lmhlo_to_scalar_op",
-        "@com_google_absl//absl/memory",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
@@ -1011,7 +1016,6 @@ cc_library(
         ":lhlo_elemental_utils",
         ":map_lmhlo_to_scalar_op",
         ":placement_utils",
-        "@com_google_absl//absl/memory",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
@@ -1035,7 +1039,6 @@ cc_library(
         ":lhlo",
         ":lhlo_elemental_utils",
         ":map_lmhlo_to_scalar_op",
-        "@com_google_absl//absl/memory",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Analysis",
         "@llvm-project//mlir:IR",
@@ -1490,6 +1493,25 @@ cc_library(
 )
 
 cc_library(
+    name = "mhlo_flatten_tuple",
+    srcs = ["lib/Dialect/mhlo/transforms/mhlo_flatten_tuple.cc"],
+    hdrs = [
+        "include/mlir-hlo/Dialect/mhlo/transforms/passes.h",
+    ],
+    deps = [
+        ":hlo",
+        ":pass_details",
+        ":transforms_pass_details",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:StandardOps",
+        "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//mlir:Transforms",
+    ],
+)
+
+cc_library(
     name = "lhlo_fusion",
     srcs = ["lib/Dialect/mhlo/transforms/lhlo_fusion.cc"],
     deps = [
@@ -1551,6 +1573,24 @@ gentbl_cc_library(
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "lib/Dialect/mhlo/transforms/chlo_legalize_to_hlo_patterns.td",
     deps = [":hlo_ops_td_files"],
+)
+
+cc_library(
+    name = "expand_hlo_tuples",
+    srcs = [
+        "lib/Dialect/mhlo/transforms/expand_hlo_tuples.cc",
+    ],
+    hdrs = [
+        "include/mlir-hlo/Dialect/mhlo/transforms/passes.h",
+    ],
+    deps = [
+        ":hlo",
+        ":pass_details",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:StandardOps",
+    ],
 )
 
 cc_library(
@@ -1621,6 +1661,7 @@ cc_library(
         ":broadcast_propagation",
         ":buffer_reuse",
         ":chlo_legalize_to_hlo",
+        ":expand_hlo_tuples",
         ":hlo_legalize_to_lhlo",
         ":hlo_legalize_to_memref",
         ":input_inline_fusion",
@@ -1641,6 +1682,7 @@ cc_library(
         ":lhlo_legalize_to_parallel_loops",
         ":mhlo_canonicalize_reduction",
         ":mhlo_control_flow_to_scf",
+        ":mhlo_flatten_tuple",
         ":mhlo_fusion",
         ":mhlo_mark_shape_calc",
         ":mhlo_to_mhlo_lowering_patterns",
@@ -1730,6 +1772,20 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "CAPI",
+    srcs = [
+        "lib/CAPI/Dialects.cpp",
+    ],
+    hdrs = [
+        "include/mlir-hlo-c/Dialects.h",
+    ],
+    deps = [
+        ":hlo",
+        "@llvm-project//mlir:CAPIIR",
+    ],
+)
+
 cc_binary(
     name = "mlir-hlo-opt",
     srcs = [
@@ -1772,11 +1828,29 @@ gentbl_filegroup(
                 "-gen-python-op-bindings",
                 "-bind-dialect=mhlo",
             ],
-            "python/_mhlo_ops_gen.py",
+            "python/mlir/dialects/_mhlo_ops_gen.py",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "python/MhloOps.td",
+    td_file = "python/mlir/dialects/MhloOps.td",
+    deps = [
+        ":MhloOpsPyTdFiles",
+    ],
+)
+
+gentbl_filegroup(
+    name = "ChloOpsPyGen",
+    tbl_outs = [
+        (
+            [
+                "-gen-python-op-bindings",
+                "-bind-dialect=chlo",
+            ],
+            "python/mlir/dialects/_chlo_ops_gen.py",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "python/mlir/dialects/ChloOps.td",
     deps = [
         ":MhloOpsPyTdFiles",
     ],
@@ -1785,7 +1859,9 @@ gentbl_filegroup(
 filegroup(
     name = "MhloOpsPyFiles",
     srcs = [
-        "python/mhlo.py",
+        "python/mlir/dialects/chlo.py",
+        "python/mlir/dialects/mhlo.py",
+        ":ChloOpsPyGen",
         ":MhloOpsPyGen",
     ],
 )

@@ -498,7 +498,7 @@ class LiveRangeRegions {
     return computation_map_.begin();
   }
   ComputationMap::const_iterator end() const { return computation_map_.end(); }
-  int64 size() const {
+  int64_t size() const {
     CHECK_EQ(computation_vector_.size(), computation_map_.size());
     return computation_vector_.size();
   }
@@ -1161,10 +1161,12 @@ class CopyRemover {
           }
           for (const HloValue* value_b : buffer.values()) {
             if (value_a != value_b) {
-              DCHECK(ordering_->LiveRangeStrictlyBefore(*value_a, *value_b,
-                                                        dataflow_) ||
-                     ordering_->LiveRangeStrictlyBefore(*value_b, *value_a,
-                                                        dataflow_))
+              DCHECK(ordering_->LiveRangeStrictlyBefore(
+                         *value_a, *value_b, dataflow_,
+                         /*use_is_always_before_def_in_same_instr=*/true) ||
+                     ordering_->LiveRangeStrictlyBefore(
+                         *value_b, *value_a, dataflow_,
+                         /*use_is_always_before_def_in_same_instr=*/true))
                   << value_a->ToString() << " and " << value_b->ToString()
                   << " are not ordered";
             }
@@ -1310,7 +1312,7 @@ class CopyRemover {
   // live range interference is introduced by the copy's elimination. If
   // elision is possible, then the internal state (value lists) are updated,
   // and true is returned. Returns false otherwise.
-  bool TryElideCopy(const HloInstruction* copy, bool use_region_analysis) {
+  bool TryElideCopy(const HloInstruction* copy, int64_t region_analysis_limit) {
     VLOG(2) << "Trying to remove " << copy->name();
 
     if (!ContainsKey(copy_map_, copy)) {
@@ -1325,6 +1327,21 @@ class CopyRemover {
     DCHECK(copy_node.src != nullptr);
     DCHECK(copy_node.dest != nullptr);
 
+    int64_t live_range_size1 = 0, live_range_size2 = 0;
+    ForEachValueInRange(copy_node.src, [&](const ValueNode* node) {
+      live_range_size1 += 1 + node->uses.size();
+    });
+    ForEachValueInRange(copy_node.dest, [&](const ValueNode* node) {
+      live_range_size2 += 1 + node->uses.size();
+    });
+    // Use the more accurate region-based live range interference analysis if
+    // the live range size is within a given limit (or if no limit is given).
+    // Also don't use the new analysis for copies of broadcasts as these copies
+    // are cheap and are later removed by replicating the broadcasts.
+    bool use_region_analysis =
+        copy->operand(0)->opcode() != HloOpcode::kBroadcast &&
+        (region_analysis_limit < 0 ||
+         live_range_size1 * live_range_size2 <= region_analysis_limit);
     VLOG(3) << copy->name() << " copies value "
             << copy_node.src->value->ToShortString();
     VLOG(3) << "Source buffer values: " << ValueListToString(copy_node.src);
@@ -1534,7 +1551,9 @@ class CopyRemover {
   // range of 'b'.
   //
   // We cannot use LiveRangeStrictlyBefore because HloValue::uses() is not
-  // updated as copies are removed.
+  // updated as copies are removed. Also here because the result is used
+  // to directly drive copy elision, use_is_always_before_def_in_same_instr is
+  // set to false.
   bool LiveRangeBefore(const ValueNode& a, const ValueNode& b) {
     if (a.uses.empty()) {
       VLOG(2) << "Empty uses for " << *a.value;
@@ -1542,7 +1561,9 @@ class CopyRemover {
     }
     VLOG(3) << "Checking live ranges before :" << ValueListToString(&a)
             << " vs " << ValueListToString(&b) << "\n";
-    return ordering_->UsesBeforeValueDefinition(a.uses, *b.value, dataflow_);
+    return ordering_->UsesBeforeValueDefinition(
+        a.uses, *b.value, dataflow_,
+        /* use_is_always_before_def_in_same_instr=*/false);
   }
 
   // Returns whether 'node' is the last node in its list.
@@ -1783,7 +1804,7 @@ Status CopyInsertion::AddCopiesToResolveInterference(HloModule* module) {
         // When an operand is a tuple, we avoid copying the operand multiple
         // times by recording and checking the operand number of operands that
         // have been copied.
-        absl::flat_hash_set<int64> copied_operands;
+        absl::flat_hash_set<int64_t> copied_operands;
         for (const auto& operand_and_output_index :
              HloDataflowAnalysis::GetInPlaceInputOutputPairs(instruction)) {
           const HloUse& operand = operand_and_output_index.first;
@@ -1845,10 +1866,10 @@ Status CopyInsertion::AddSpecialCaseCopies(const CallGraph& call_graph,
   // Identify copies which must be added at root instructions
   for (HloComputation* computation : module->computations()) {
     const CallGraphNode& node = call_graph.GetNode(computation);
-    if (node.context() == CallContext::kParallel) {
+    if (node.context() == CallContext::kEmbedded) {
       continue;
     }
-    TF_RET_CHECK(node.context() == CallContext::kSequential);
+    TF_RET_CHECK(node.context() == CallContext::kControlFlow);
 
     SpecialCaseCopyPolicy policy =
         GetSpecialCaseCopyPolicy(node, module, computation);
@@ -1925,7 +1946,7 @@ Status CopyInsertion::AddSpecialCaseCopies(const CallGraph& call_graph,
   return Status::OK();
 }
 
-static int64 GetNumExistingCopies(const HloModule* module) {
+static int64_t GetNumExistingCopies(const HloModule* module) {
   int64_t num_existing_copies = 0;
   for (HloComputation* computation : module->computations()) {
     for (HloInstruction* instruction : computation->instructions()) {

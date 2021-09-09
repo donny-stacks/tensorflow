@@ -32,19 +32,24 @@ namespace data {
 // Rewrites the dataset graph by applying an auto-shard policy.
 class AutoShardRewriter {
  public:
-  explicit AutoShardRewriter(const TaskDef& task_def);
+  // Creates an `AutoShardRewriter` according to `task_def`. Returns an error if
+  // the sharding policy is not a valid auto-shard policy.
+  static StatusOr<AutoShardRewriter> Create(const TaskDef& task_def);
 
   // Applies auto-sharding to `graph_def`. If auto-shard policy is OFF, returns
   // the same graph as `graph_def`. Otherwise, returns the re-written graph.
   StatusOr<GraphDef> ApplyAutoShardRewrite(const GraphDef& graph_def);
 
  private:
+  AutoShardRewriter(AutoShardPolicy auto_shard_policy, int64 num_workers,
+                    int64 worker_index);
+
   // Creates a rewrite config based on the auto-shard policy.
   tensorflow::RewriterConfig::CustomGraphOptimizer GetRewriteConfig() const;
 
   const AutoShardPolicy auto_shard_policy_;
-  const int64 num_workers_;
-  const int64 worker_index_;
+  const int64_t num_workers_;
+  const int64_t worker_index_;
 };
 
 // Maps a worker to its index, given a list of workers. For example, suppose
@@ -77,7 +82,7 @@ class WorkerIndexResolver {
 
   // Returns the worker index for the worker at `worker_address`. Returns a
   // NotFound error if the worker is not registered.
-  StatusOr<int64> GetWorkerIndex(absl::string_view worker_address) const;
+  StatusOr<int64_t> GetWorkerIndex(absl::string_view worker_address) const;
 
  private:
   std::vector<std::string> worker_addresses_;

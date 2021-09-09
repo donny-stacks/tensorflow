@@ -159,8 +159,6 @@ class TPUTest(test.TestCase):
                         "/job:localhost/replica:0/task:0/device:TPU:0")
 
   def test_on_demand_op_with_dynamic_output(self):
-    if FLAGS.tpu_use_tfrt:
-      self.skipTest("Support dynamic output in TFRT, see b/192576400")
     with ops.device("/device:TPU:0"):
       where_output = array_ops.where([True, False, True])
     self.assertAllEqual(where_output, [[0], [2]])
@@ -449,8 +447,6 @@ class TPUStrategyTest(test.TestCase, parameterized.TestCase):
     self.assertEqual(2.0, v.numpy())
 
   def test_cluster_conditional_with_dynamic_shape(self, enable_packed_var):
-    if FLAGS.tpu_use_tfrt:
-      self.skipTest("Support dynamic output in TFRT, see b/192576400")
     strategy = get_tpu_strategy(enable_packed_var)
 
     @def_function.function
@@ -1016,6 +1012,41 @@ class TPUStrategyTest(test.TestCase, parameterized.TestCase):
     with strategy.scope():
       update_variable.get_concrete_function()
       self.assertLen(strategy.extended.worker_devices, trace_count[0])
+
+  def test_tpu_cancellation_does_not_close_chips(self, enable_packed_var):
+    strategy = get_tpu_strategy(enable_packed_var)
+    num_replicas = strategy.num_replicas_in_sync
+    with strategy.scope():
+      x = random_ops.random_normal((10240, 10240))
+      y = random_ops.random_normal((10240, 10240))
+
+      v = variables.Variable(array_ops.identity(x))
+      dist_dataset = strategy.experimental_distribute_dataset(
+          dataset_ops.Dataset.from_tensors(y).repeat(num_replicas).batch(
+              num_replicas))
+      dist_iterator = iter(dist_dataset)
+
+      @def_function.function
+      def train_steps(v, iterator, steps):
+
+        def step_fn(inputs):
+          for val in inputs:
+            v.assign(math_ops.matmul(v, val))
+
+        for _ in math_ops.range(steps):
+          strategy.run(step_fn, args=(next(iterator),))
+
+      with self.assertRaises(errors.OutOfRangeError):
+        # The iterator has num_replicas/num_replicas = 1 step only.
+        train_steps(v, dist_iterator, 2)
+
+      # If TPU chips are not closed we can run the function on TPU again.
+      w = variables.Variable(array_ops.identity(x))
+      dist_dataset = strategy.experimental_distribute_dataset(
+          dataset_ops.Dataset.from_tensors(y).repeat(num_replicas).batch(
+              num_replicas))
+      dist_iterator = iter(dist_dataset)
+      train_steps(w, dist_iterator, 1)
 
 
 class TPUStrategyDataPrefetchTest(test.TestCase):

@@ -21,18 +21,19 @@ limitations under the License.
 #include <utility>
 
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
-#include "tfrt/cpu/jit/cpurt.h"
-#include "tfrt/dtype/dtype.h"
-#include "tfrt/host_context/async_value.h"
-#include "tfrt/host_context/concurrent_work_queue.h"
-#include "tfrt/host_context/execution_context.h"
-#include "tfrt/host_context/host_allocator.h"
-#include "tfrt/host_context/kernel_utils.h"
-#include "tfrt/support/ref_count.h"
-#include "tfrt/support/string_util.h"
+#include "mlir/Transforms/Bufferize.h"
 #include "tensorflow/compiler/mlir/tensorflow/dialect_registration.h"
-#include "tensorflow/compiler/mlir/tfrt/jit/tf_cpurt_passes.h"
+#include "tensorflow/compiler/mlir/tfrt/jit/tf_cpurt_pipeline.h"
 #include "tensorflow/core/platform/dynamic_annotations.h"
+#include "tfrt/cpu/jit/cpurt.h"  // from @tf_runtime
+#include "tfrt/dtype/dtype.h"  // from @tf_runtime
+#include "tfrt/host_context/async_value.h"  // from @tf_runtime
+#include "tfrt/host_context/concurrent_work_queue.h"  // from @tf_runtime
+#include "tfrt/host_context/execution_context.h"  // from @tf_runtime
+#include "tfrt/host_context/host_allocator.h"  // from @tf_runtime
+#include "tfrt/host_context/kernel_utils.h"  // from @tf_runtime
+#include "tfrt/support/ref_count.h"  // from @tf_runtime
+#include "tfrt/support/string_util.h"  // from @tf_runtime
 
 namespace py = pybind11;
 
@@ -73,8 +74,9 @@ TfCpurtExecutor::Handle TfCpurtExecutor::Compile(
   // Create an async task for each worker thread.
   opts.num_worker_threads = 4;
   opts.register_dialects = mlir::RegisterAllTensorFlowDialects;
-  opts.register_pass_pipeline = CreateTfCpuRtPipeline;
+  opts.register_pass_pipeline = CreateDefaultTfCpuRtPipeline;
   opts.specialization = specialization;
+  opts.type_converter = mlir::BufferizeTypeConverter();
 
   // Instantiate new JitExecutable from the MLIR source.
   llvm::Expected<JitExecutable> jit_executable =
@@ -296,7 +298,10 @@ std::vector<py::array> TfCpurtExecutor::Execute(
   for (auto& result : result_storage) {
     if (result->IsError())
       throw std::runtime_error(StrCat("result error: ", result->GetError()));
-    ret_values.emplace_back(result->get<py::array>());
+    py::array& result_array = result->get<py::array>();
+    TF_ANNOTATE_MEMORY_IS_INITIALIZED(result_array.data(),
+                                      result_array.nbytes());
+    ret_values.emplace_back(result_array);
   }
 
   return ret_values;

@@ -43,9 +43,9 @@ cc_library(
     hdrs = [
         "PassDetail.h",
     ],
-    compatible_with = get_compatible_with_cloud(),
     deps = [
         ":TfrtGpuPassIncGen",
+        "//tensorflow/compiler/xla/service/gpu:xlir_opdefs",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:Pass",
         "@tf_runtime//:basic_kernels_opdefs",
@@ -56,12 +56,17 @@ cc_library(
 cc_library(
     name = "pass",
     srcs = [
+        "ccl_pattern.cc",
+        "ccl_pattern.h",
+        "custom_call_pattern.cc",
+        "custom_call_pattern.h",
         "gemm_pattern.cc",
         "gemm_pattern.h",
         "gpu_passes.cc",
+        "memcpy_pattern.cc",
+        "memcpy_pattern.h",
     ],
     hdrs = ["gpu_passes.h"],
-    compatible_with = get_compatible_with_cloud(),
     tags = [
         "gpu",
         "no_oss",
@@ -74,6 +79,9 @@ cc_library(
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/xla:type_to_shape",
         "//tensorflow/compiler/xla:shape_util",
+        "//tensorflow/compiler/xla:xla_data_proto_cc",
+        "//tensorflow/compiler/xla/service/gpu:nccl_collective_thunks",
+        "//tensorflow/compiler/xla/service/gpu:xlir_opdefs",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:GPUDialect",

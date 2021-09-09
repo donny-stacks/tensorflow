@@ -820,8 +820,9 @@ package_group(name = "types_whitelist")
 
 # Packages that use StructuredTensors.
 # TODO(b/159007891) Remove this package once StructuredTensor is exported.
-# If this is modified, then copy.bara.sky must also be modified.
+# LINT.IfChange
 package_group(name = "structured_tensor_whitelist")
+# LINT.ThenChange(copy.bara.sky)
 
 filegroup(
     name = "intel_binary_blob",
@@ -954,7 +955,7 @@ tf_cc_shared_object(
         "//tensorflow/c:logging",
         "//tensorflow/c:ops",
         "//tensorflow/cc/saved_model:loader_lite_impl",
-        "//tensorflow/cc/experimental/libexport:metrics_impl",
+        "//tensorflow/cc/saved_model:metrics_impl",
         "//tensorflow/core/common_runtime:core_cpu_impl",
         "//tensorflow/core:framework_internal_impl",
         "//tensorflow/core/common_runtime/gpu:gpu_runtime_impl",
@@ -962,6 +963,7 @@ tf_cc_shared_object(
         "//tensorflow/core/grappler/optimizers:custom_graph_optimizer_registry_impl",
         "//tensorflow/core:lib_internal_impl",
         "//tensorflow/core/profiler:profiler_impl",
+        "//tensorflow/core/util:determinism",
         "//tensorflow/lite/kernels/shim:tf_kernel_shim",
         "//tensorflow/stream_executor:stream_executor_impl",
         "//tensorflow:tf_framework_version_script.lds",

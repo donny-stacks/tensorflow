@@ -173,7 +173,7 @@ Status ProcessFunctionLibraryRuntime::GetRetTypes(
 }
 
 Status ProcessFunctionLibraryRuntime::GetDeviceIncarnation(
-    const string& device_name, int64* incarnation) const {
+    const string& device_name, int64_t* incarnation) const {
   FunctionLibraryRuntime* flr = GetFLR(device_name);
   if (flr == nullptr) {
     return errors::InvalidArgument("Device name: ", device_name, " not found.");
@@ -210,16 +210,32 @@ Status ProcessFunctionLibraryRuntime::GetDeviceContext(
 }
 
 void ProcessFunctionLibraryRuntime::InitializeDeviceAndFlr() {
-  DeviceMgr const* all_devices = device_mgr_;
-  if (parent_ != nullptr && parent_->remote_device_mgr() != nullptr) {
-    all_devices = parent_->remote_device_mgr();
-  }
-
+  // Reset device_set_ by one of the two following scenarios:
+  // 1) Both cluster-FLR and its remote_device_mgr is available: include local
+  //    devices (if any) from the local device_mgr_ as Device type, and include
+  //    remote devices from cluster's remote_device_mgr as RemoteDevice type.
+  // 2) Include local devices from the local device_mgr_.
+  // In both scenarios, no device is added more than one times.
   mutex_lock l(mu_);
   device_set_ = std::make_shared<DeviceSet>();
-  for (auto d : all_devices->ListDevices()) {
-    device_set_->AddDevice(d);
+  if (parent_ != nullptr && parent_->remote_device_mgr() != nullptr) {
+    for (auto d : parent_->remote_device_mgr()->ListDevices()) {
+      Device* device = nullptr;
+      if (device_mgr_->LookupDevice(d->name(), &device) == Status::OK()) {
+        // If this device exists in device_mgr, i.e., a local device,
+        // add this device from the instance included in device_mgr_
+        device_set_->AddDevice(device);
+      } else {
+        device_set_->AddDevice(d);
+      }
+    }
+  } else {
+    for (auto d : device_mgr_->ListDevices()) {
+      device_set_->AddDevice(d);
+    }
   }
+
+  // Update flr_map_ by adding new devices
   for (Device* d : device_mgr_->ListDevices()) {
     if ((*flr_map_)[d] == nullptr) {
       (*flr_map_)[d] = NewFunctionLibraryRuntime(
@@ -364,10 +380,9 @@ const string* AssignedOrRequestedDeviceName(const Node& node) {
   return &node.requested_device();
 }
 
-Status SetArgShape(
-    const std::unordered_map<int, DtypeAndPartialTensorShape>&
-        input_resource_dtypes_and_shapes,
-    const std::vector<Node*>& arg_nodes) {
+Status SetArgShape(const std::unordered_map<int, DtypeAndPartialTensorShape>&
+                       input_resource_dtypes_and_shapes,
+                   const std::vector<Node*>& arg_nodes) {
   for (Node* n : arg_nodes) {
     int index;
     TF_RETURN_IF_ERROR(GetNodeAttr(n->def(), "index", &index));
@@ -518,20 +533,21 @@ Status ProcessFunctionLibraryRuntime::PinArgsAndRets(
             }
             // Compare with default_device if it has a narrower scope matching
             // requested device.
-            int colocated_on_default_device = 0;
-            for (int i = 0; i < matching_devices.size(); ++i) {
-              if (DeviceNameUtils::IsSameAddressSpace(
-                      default_device->parsed_name(),
-                      matching_devices.at(i)->parsed_name())) {
-                colocated_on_default_device++;
+            if (default_device != nullptr) {
+              int colocated_on_default_device = 0;
+              for (int i = 0; i < matching_devices.size(); ++i) {
+                if (DeviceNameUtils::IsSameAddressSpace(
+                        default_device->parsed_name(),
+                        matching_devices.at(i)->parsed_name())) {
+                  colocated_on_default_device++;
+                }
+              }
+              // Continue to raise error if multiple colocated devices are
+              // found.
+              if (colocated_on_default_device == 1) {
+                continue;
               }
             }
-            // Continue to raise error if multiple colocated devices are
-            // found.
-            if (colocated_on_default_device == 1) {
-              continue;
-            }
-
             // Convert a vector of devices to a string.
             // Using absl::StrJoin did not work in Android builds.
             string devices = "[";
@@ -1168,7 +1184,8 @@ void ProcessFunctionLibraryRuntime::RunMultiDevice(
         const string function_and_msg = strings::StrCat(
             errors::FormatFunctionForError(data->function_name_), " ",
             status.error_message());
-        refcounted_done->UpdateStatus(Status(status.code(), function_and_msg));
+        refcounted_done->UpdateStatus(
+            errors::CreateWithUpdatedMessage(status, function_and_msg));
         // Cancel the execution of other component functions.
         cm->StartCancel();
       } else {
@@ -1190,7 +1207,7 @@ void ProcessFunctionLibraryRuntime::RunMultiDevice(
       // When target device has private thread pool, use the target device
       // runner
       thread::ThreadPool* pool = flr->device()->tensorflow_device_thread_pool();
-      opts_copy.runner = (pool == nullptr) ? opts_copy.runner : flr->runner();
+      opts_copy.runner = (pool == nullptr) ? opts.runner : flr->runner();
 
       VLOG(1) << "Running component function on device " << target << " from "
               << data->function_name_ << " with handle " << handle;
@@ -1371,25 +1388,24 @@ ProcessFunctionLibraryRuntime::ApplyCleanUpToDoneCallback(
     std::vector<std::unique_ptr<CleanUpItem>>* items,
     FunctionLibraryRuntime::DoneCallback done, const int64_t step_id,
     const Rendezvous* created_rendezvous) const {
-  return
-      [this, items, done = std::move(done), step_id,
-       created_rendezvous](const Status& status) {
-        if (created_rendezvous) {
-          DCHECK(rendezvous_factory_);
-          created_rendezvous->Unref();
-          Status s = rendezvous_factory_.CleanUp(step_id);
-          if (!s.ok()) {
-            LOG(ERROR) << s;
-          }
-        }
-        auto* local_status = new Status(status);
-        CleanUp(items, [local_status, done](const Status& cleanup_status) {
-          local_status->Update(cleanup_status);
-          done(*local_status);
-          delete local_status;
-        });
-        delete items;
-      };
+  return [this, items, done = std::move(done), step_id,
+          created_rendezvous](const Status& status) {
+    if (created_rendezvous) {
+      DCHECK(rendezvous_factory_);
+      created_rendezvous->Unref();
+      Status s = rendezvous_factory_.CleanUp(step_id);
+      if (!s.ok()) {
+        LOG(ERROR) << s;
+      }
+    }
+    auto* local_status = new Status(status);
+    CleanUp(items, [local_status, done](const Status& cleanup_status) {
+      local_status->Update(cleanup_status);
+      done(*local_status);
+      delete local_status;
+    });
+    delete items;
+  };
 }
 
 Status ProcessFunctionLibraryRuntime::CreateRendezvous(

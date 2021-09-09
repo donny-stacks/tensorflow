@@ -22,12 +22,17 @@ from __future__ import print_function
 import os
 
 from absl.testing import parameterized
+import numpy as np
 from six.moves import zip
 
 from tensorflow.lite.python.interpreter import Interpreter
 from tensorflow.python.eager import def_function
+from tensorflow.python.framework import constant_op
+from tensorflow.python.framework import dtypes
+from tensorflow.python.framework import tensor_spec
 from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import variables
 from tensorflow.python.training.tracking import tracking
 
@@ -137,6 +142,64 @@ class ModelTest(test_util.TensorFlowTestCase, parameterized.TestCase):
         return x * self.z + y
 
     return BasicModel()
+
+  def _getMultiFunctionModelWithSharedWeight(self):
+
+    class BasicModelWithSharedWeight(tracking.AutoTrackable):
+      """Model with multiple functions and a shared weight."""
+
+      def __init__(self):
+        self.weight = constant_op.constant([1.0],
+                                           shape=(1, 512, 512, 1),
+                                           dtype=dtypes.float32)
+
+      @def_function.function
+      def add(self, x):
+        return x + self.weight
+
+      @def_function.function
+      def sub(self, x):
+        return x - self.weight
+
+      @def_function.function
+      def mul(self, x):
+        return x * self.weight
+
+    return BasicModelWithSharedWeight()
+
+  def _getMatMulModelWithSmallWeights(self):
+
+    class MatMulModelWithSmallWeights(tracking.AutoTrackable):
+      """MatMul model with small weights and relatively large biases."""
+
+      def __init__(self):
+        self.weight = constant_op.constant([[1e-3, -1e-3], [-2e-4, 2e-4]],
+                                           shape=(2, 2),
+                                           dtype=dtypes.float32)
+        self.bias = constant_op.constant([1.28, 2.55],
+                                         shape=(2,),
+                                         dtype=dtypes.float32)
+
+      @def_function.function
+      def matmul(self, x):
+        return x @ self.weight + self.bias
+
+    return MatMulModelWithSmallWeights()
+
+  def _getSqrtModel(self):
+    """Returns a model with only one sqrt op, to test non-quantizable op."""
+
+    @def_function.function(input_signature=[
+        tensor_spec.TensorSpec(shape=(1, 10), dtype=dtypes.float32)
+    ])
+    def sqrt(x):
+      return math_ops.sqrt(x)
+
+    def calibration_gen():
+      for _ in range(5):
+        yield [np.random.uniform(0, 16, size=(1, 10)).astype(np.float32)]
+
+    return sqrt, calibration_gen
 
   def _assertValidDebugInfo(self, debug_info):
     """Verify the DebugInfo is valid."""

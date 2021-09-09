@@ -73,6 +73,9 @@ DeviceCapabilities GetDeviceCapFromXPlane(const XPlane& device_plane) {
       case kDevCapComputeCapMinor:
         cap.mutable_compute_capability()->set_minor(stat.IntValue());
         break;
+      case kDevVendor:
+        cap.set_device_vendor(std::string(stat.StrOrRefValue()));
+        break;
     }
   });
   return cap;
@@ -159,8 +162,9 @@ OpStats ConvertXSpaceToOpStats(const XSpace& space,
       gpu_model = GpuModelName(GetDeviceCapFromXPlane(*device_trace));
     }
     if (options.generate_step_db) {
-      CombineStepEvents(ConvertDeviceTraceXPlaneToStepEvents(*device_trace),
-                        &step_events);
+      StepEvents device_step_events =
+          ConvertDeviceTraceXPlaneToStepEvents(*device_trace);
+      CombineStepEvents(device_step_events, &step_events);
     }
     if (options.generate_kernel_stats_db) {
       ConvertDeviceTraceXPlaneToKernelReports(*device_trace,
@@ -187,9 +191,11 @@ OpStats ConvertXSpaceToOpStats(const XSpace& space,
           ConvertHostThreadsXPlaneToOpMetricsDb(*host_plane);
     }
     if (options.generate_step_db) {
-      CombineStepEvents(ConvertHostThreadsXPlaneToStepEvents(
-                            *host_plane, has_device, step_events),
-                        &step_events);
+      const StepEvents* device_step_events =
+          has_device ? &step_events : nullptr;
+      StepEvents host_step_events =
+          ConvertHostThreadsXPlaneToStepEvents(*host_plane, device_step_events);
+      CombineStepEvents(host_step_events, &step_events);
     }
   }
   if (options.generate_step_db) {
